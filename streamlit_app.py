@@ -256,12 +256,12 @@ def create_interactive_plots(filtered_df):
     return plots
 
 @st.cache_data
-def load_sponsored_product_data(excel_file, csv_file):
+def load_sponsored_product_data(excel_file, csv_product_file, csv_brand_file):
     """
     Load and process sponsored product data from Excel and CSV files
     """
-    if not excel_file or not csv_file:
-        return None, None
+    if not excel_file:
+        return None, None, None
     
     # Read Excel file - get available sheets first
     try:
@@ -278,13 +278,14 @@ def load_sponsored_product_data(excel_file, csv_file):
         else:
             df_ad_product = pd.read_excel(excel_file)
             
-        # Read CSV file
-        st_imp_df = pd.read_csv(csv_file)
+        # Read CSV files
+        st_imp_product_df = pd.read_csv(csv_product_file) if csv_product_file else None
+        st_imp_brand_df = pd.read_csv(csv_brand_file) if csv_brand_file else None
         
-        return df_ad_product, st_imp_df
+        return df_ad_product, st_imp_product_df, st_imp_brand_df
     except Exception as e:
         st.error(f"Error loading files: {str(e)}")
-        return None, None
+        return None, None, None
 
 def process_search_term_analysis(df_ad_product, st_imp_df, selected_asin):
     """
@@ -358,6 +359,129 @@ def process_search_term_analysis(df_ad_product, st_imp_df, selected_asin):
     final_df.columns = ['Search Term', 'Search Term Impression Rank', 
                        'Search Term Impression Share', 'Impressions', 'CTR',
                        'Total Orders', 'ACoS', 'ACR']
+    
+    return final_df
+
+def process_brand_search_term_analysis(st_imp_df):
+    """
+    Process brand search term analysis for all campaigns (no ASIN filtering)
+    Handles both 7 Day and 14 Day column formats
+    """
+    if st_imp_df is None or len(st_imp_df) == 0:
+        return None
+        
+    # Make a copy of the dataframe
+    filtered_st_imp_df = st_imp_df.copy()
+    
+    # Check available columns and determine the correct column names
+    available_columns = filtered_st_imp_df.columns.tolist()
+    
+    # Determine orders and sales column names (could be 7 Day or 14 Day)
+    orders_col = None
+    sales_col = None
+    
+    if '14 Day Total Orders (#)' in available_columns:
+        orders_col = '14 Day Total Orders (#)'
+        sales_col = '14 Day Total Sales ($)'
+    elif '7 Day Total Orders (#)' in available_columns:
+        orders_col = '7 Day Total Orders (#)'
+        sales_col = '7 Day Total Sales ($)'
+    
+    # Define numeric columns based on available data
+    numeric_columns = ['Search Term Impression Rank', 'Search Term Impression Share', 
+                      'Impressions', 'Clicks', 'Spend']
+    
+    if orders_col and orders_col in available_columns:
+        numeric_columns.append(orders_col)
+    if sales_col and sales_col in available_columns:
+        numeric_columns.append(sales_col)
+    
+    # Clean and convert numeric columns
+    for col in numeric_columns:
+        if col in filtered_st_imp_df.columns:
+            filtered_st_imp_df[col] = filtered_st_imp_df[col].astype(str).str.replace('$', '', regex=False)
+            filtered_st_imp_df[col] = filtered_st_imp_df[col].astype(str).str.replace('%', '', regex=False)
+            filtered_st_imp_df[col] = pd.to_numeric(filtered_st_imp_df[col], errors='coerce')
+    
+    # Build aggregation dictionary
+    agg_dict = {
+        'Search Term Impression Rank': 'mean',
+        'Search Term Impression Share': 'mean',
+        'Impressions': 'sum',
+        'Clicks': 'sum',
+        'Spend': 'sum'
+    }
+    
+    if orders_col and orders_col in filtered_st_imp_df.columns:
+        agg_dict[orders_col] = 'sum'
+    if sales_col and sales_col in filtered_st_imp_df.columns:
+        agg_dict[sales_col] = 'sum'
+    
+    # Group by Customer Search Term
+    grouped_df = filtered_st_imp_df.groupby(['Customer Search Term']).agg(agg_dict).reset_index()
+    
+    # Convert impression share to decimal if it's in percentage
+    if len(grouped_df) > 0 and grouped_df['Search Term Impression Share'].max() > 1:
+        grouped_df['Search Term Impression Share'] = grouped_df['Search Term Impression Share'] / 100
+    
+    # Calculate additional metrics
+    grouped_df['Available impression'] = np.where(
+        grouped_df['Search Term Impression Share'] != 0,
+        grouped_df['Impressions'] / grouped_df['Search Term Impression Share'],
+        None
+    )
+    
+    grouped_df['CTR'] = np.where(
+        grouped_df['Available impression'] != 0,
+        grouped_df['Clicks'] * 100 / grouped_df['Available impression'],
+        None
+    )
+    
+    # Calculate ACoS if sales column exists
+    if sales_col and sales_col in grouped_df.columns:
+        grouped_df['ACoS'] = np.where(
+            grouped_df[sales_col] != 0,
+            grouped_df['Spend'] * 100 / grouped_df[sales_col],
+            None
+        )
+    else:
+        grouped_df['ACoS'] = None
+    
+    # Calculate ACR if orders column exists
+    if orders_col and orders_col in grouped_df.columns:
+        grouped_df['ACR'] = np.where(
+            grouped_df['Clicks'] != 0,
+            grouped_df[orders_col] * 100 / grouped_df['Clicks'],
+            None
+        )
+    else:
+        grouped_df['ACR'] = None
+    
+    # Convert impression share back to percentage for display
+    grouped_df['Search Term Impression Share'] = grouped_df['Search Term Impression Share'] * 100
+    
+    # Build final columns list
+    final_columns = ['Customer Search Term', 'Search Term Impression Rank', 
+                    'Search Term Impression Share', 'Impressions', 'CTR']
+    
+    if orders_col and orders_col in grouped_df.columns:
+        final_columns.append(orders_col)
+    
+    final_columns.extend(['ACoS', 'ACR'])
+    
+    # Select final columns
+    final_df = grouped_df[final_columns].copy()
+    
+    # Rename columns for display
+    display_columns = ['Search Term', 'Search Term Impression Rank', 
+                      'Search Term Impression Share', 'Impressions', 'CTR']
+    
+    if orders_col and orders_col in grouped_df.columns:
+        display_columns.append('Total Orders')
+        
+    display_columns.extend(['ACoS', 'ACR'])
+    
+    final_df.columns = display_columns
     
     return final_df
 
@@ -493,7 +617,7 @@ def main():
         # File upload section for sponsored product analysis
         st.subheader("📁 Upload Sponsored Product Data")
         
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         
         with col1:
             excel_file = st.file_uploader(
@@ -504,19 +628,27 @@ def main():
             )
         
         with col2:
-            csv_file = st.file_uploader(
-                "Upload Search Term Impression Share (CSV)",
+            csv_product_file = st.file_uploader(
+                "Upload Search Term Impression Share for Product (CSV)",
                 type="csv",
-                help="Upload the search term impression share CSV file",
-                key="st_csv_uploader"
+                help="Upload the search term impression share CSV file for product analysis (7 Day data)",
+                key="st_product_csv_uploader"
+            )
+            
+        with col3:
+            csv_brand_file = st.file_uploader(
+                "Upload Search Term Impression Share for Brand (CSV)",
+                type="csv",
+                help="Upload the search term impression share CSV file for brand analysis (14 Day data)",
+                key="st_brand_csv_uploader"
             )
         
-        if excel_file and csv_file:
+        if excel_file and (csv_product_file or csv_brand_file):
             # Load sponsored product data
             with st.spinner("Loading sponsored product data..."):
-                df_ad_product, st_imp_df = load_sponsored_product_data(excel_file, csv_file)
+                df_ad_product, st_imp_product_df, st_imp_brand_df = load_sponsored_product_data(excel_file, csv_product_file, csv_brand_file)
             
-            if df_ad_product is not None and st_imp_df is not None:
+            if df_ad_product is not None:
                 st.success("✅ Sponsored product data loaded successfully!")
                 
                 # Display data summary
@@ -528,83 +660,159 @@ def main():
                 with col2:
                     st.metric("Unique ASINs", df_ad_product['Advertised ASIN'].nunique())
                 with col3:
-                    st.metric("Search Terms", len(st_imp_df))
+                    if st_imp_product_df is not None:
+                        st.metric("Product Search Terms", len(st_imp_product_df))
+                    else:
+                        st.metric("Product Search Terms", "N/A")
                 with col4:
-                    st.metric("Unique Campaigns", st_imp_df['Campaign Name'].nunique())
+                    if st_imp_brand_df is not None:
+                        st.metric("Brand Search Terms", len(st_imp_brand_df))
+                    else:
+                        st.metric("Brand Search Terms", "N/A")
                 
-                # ASIN selection
-                st.subheader("🎯 ASIN Selection")
-                available_asins = sorted(df_ad_product['Advertised ASIN'].unique())
-                selected_asin = st.selectbox(
-                    "Select ASIN for Analysis:",
-                    options=available_asins,
-                    index=available_asins.index('B0BH6G8Q94') if 'B0BH6G8Q94' in available_asins else 0,
-                    help="Choose an ASIN to analyze search term performance"
-                )
+                # Create analysis tabs for Product and Brand
+                analysis_tabs = []
+                if st_imp_product_df is not None:
+                    analysis_tabs.append("📊 Product Analysis")
+                if st_imp_brand_df is not None:
+                    analysis_tabs.append("🏷️ Brand Analysis")
                 
-                # Process and display search term analysis
-                with st.spinner("Processing search term analysis..."):
-                    search_term_df = process_search_term_analysis(df_ad_product, st_imp_df, selected_asin)
-                
-                if search_term_df is not None and len(search_term_df) > 0:
-                    st.subheader(f"📊 Search Term Analysis for ASIN: **{selected_asin}**")
+                if analysis_tabs:
+                    analysis_tab_objects = st.tabs(analysis_tabs)
                     
-                    # Display key metrics for selected search terms
-                    three_farmers_data = search_term_df[search_term_df['Search Term'] == 'three farmers']
-                    if not three_farmers_data.empty:
-                        st.info("**🔍 'Three Farmers' Search Term Metrics:**")
-                        col1, col2, col3, col4 = st.columns(4)
-                        
-                        with col1:
-                            st.metric("Impressions", f"{three_farmers_data.iloc[0]['Impressions']:,.0f}")
-                        with col2:
-                            st.metric("CTR", f"{three_farmers_data.iloc[0]['CTR']:.2f}%" if pd.notnull(three_farmers_data.iloc[0]['CTR']) else "N/A")
-                        with col3:
-                            st.metric("Total Orders", f"{three_farmers_data.iloc[0]['Total Orders']:,.0f}")
-                        with col4:
-                            st.metric("ACoS", f"{three_farmers_data.iloc[0]['ACoS']:.2f}%" if pd.notnull(three_farmers_data.iloc[0]['ACoS']) else "N/A")
+                    tab_index = 0
                     
-                    # Display the full search term analysis table
-                    st.subheader("📋 Complete Search Term Analysis")
-                    
-                    
-                    # Display filtered results
-                    st.dataframe(
-                        search_term_df,
-                        use_container_width=True,
-                        hide_index=True,
-                        column_config={
-                            "Search Term Impression Share": st.column_config.NumberColumn(
-                                "Impression Share (%)",
-                                format="%.2f%%"
-                            ),
-                            "CTR": st.column_config.NumberColumn(
-                                "CTR (%)",
-                                format="%.2f%%"
-                            ),
-                            "ACoS": st.column_config.NumberColumn(
-                                "ACoS (%)",
-                                format="%.2f%%"
-                            ),
-                            "ACR": st.column_config.NumberColumn(
-                                "ACR (%)",
-                                format="%.2f%%"
+                    # Product Analysis Tab
+                    if st_imp_product_df is not None:
+                        with analysis_tab_objects[tab_index]:
+                            st.subheader("🎯 ASIN Selection for Product Analysis")
+                            available_asins = sorted(df_ad_product['Advertised ASIN'].unique())
+                            selected_asin = st.selectbox(
+                                "Select ASIN for Product Analysis:",
+                                options=available_asins,
+                                index=available_asins.index('B0BH6G8Q94') if 'B0BH6G8Q94' in available_asins else 0,
+                                help="Choose an ASIN to analyze search term performance",
+                                key="product_asin_selector"
                             )
-                        }
-                    )
+                            
+                            # Process and display search term analysis for product
+                            with st.spinner("Processing product search term analysis..."):
+                                product_search_term_df = process_search_term_analysis(df_ad_product, st_imp_product_df, selected_asin)
+                            
+                            if product_search_term_df is not None and len(product_search_term_df) > 0:
+                                st.subheader(f"📊 Product Search Term Analysis for ASIN: **{selected_asin}**")
+                                
+                                # Display the full search term analysis table
+                                st.subheader("📋 Complete Product Search Term Analysis")
+                                
+                                # Display filtered results
+                                st.dataframe(
+                                    product_search_term_df,
+                                    use_container_width=True,
+                                    hide_index=True,
+                                    column_config={
+                                        "Search Term Impression Share": st.column_config.NumberColumn(
+                                            "Impression Share (%)",
+                                            format="%.2f%%"
+                                        ),
+                                        "CTR": st.column_config.NumberColumn(
+                                            "CTR (%)",
+                                            format="%.2f%%"
+                                        ),
+                                        "ACoS": st.column_config.NumberColumn(
+                                            "ACoS (%)",
+                                            format="%.2f%%"
+                                        ),
+                                        "ACR": st.column_config.NumberColumn(
+                                            "ACR (%)",
+                                            format="%.2f%%"
+                                        )
+                                    }
+                                )
+                                
+                                # Download button for the processed data
+                                csv_data = product_search_term_df.to_csv(index=False)
+                                st.download_button(
+                                    label="📥 Download Product Search Term Analysis",
+                                    data=csv_data,
+                                    file_name=f"product_search_term_analysis_{selected_asin}.csv",
+                                    mime="text/csv",
+                                    key="download_product_analysis"
+                                )
+                            else:
+                                st.warning("No product search term data found for the selected ASIN.")
+                        
+                        tab_index += 1
                     
-                    # Download button for the processed data
-                    csv_data = search_term_df.to_csv(index=False)
-                    st.download_button(
-                        label="📥 Download Search Term Analysis",
-                        data=csv_data,
-                        file_name=f"search_term_analysis_{selected_asin}.csv",
-                        mime="text/csv"
-                    )
+                    # Brand Analysis Tab
+                    if st_imp_brand_df is not None:
+                        with analysis_tab_objects[tab_index]:
+                            st.subheader("🏷️ Brand Search Term Analysis")
+                            st.caption("Analysis across all campaigns (no ASIN filtering) - 14 Day Attribution")
+                            
+                            # Process and display search term analysis for brand
+                            with st.spinner("Processing brand search term analysis..."):
+                                brand_search_term_df = process_brand_search_term_analysis(st_imp_brand_df)
+                            
+                            if brand_search_term_df is not None and len(brand_search_term_df) > 0:
+                                # Display key metrics for selected search terms
+                                three_farmers_data = brand_search_term_df[brand_search_term_df['Search Term'] == 'three farmers']
+                                if not three_farmers_data.empty:
+                                    st.info("**🔍 'Three Farmers' Search Term Metrics (Brand - 14 Day):**")
+                                    col1, col2, col3, col4 = st.columns(4)
+                                    
+                                    with col1:
+                                        st.metric("Impressions", f"{three_farmers_data.iloc[0]['Impressions']:,.0f}")
+                                    with col2:
+                                        st.metric("CTR", f"{three_farmers_data.iloc[0]['CTR']:.2f}%" if pd.notnull(three_farmers_data.iloc[0]['CTR']) else "N/A")
+                                    with col3:
+                                        st.metric("Total Orders", f"{three_farmers_data.iloc[0]['Total Orders']:,.0f}")
+                                    with col4:
+                                        st.metric("ACoS", f"{three_farmers_data.iloc[0]['ACoS']:.2f}%" if pd.notnull(three_farmers_data.iloc[0]['ACoS']) else "N/A")
+                                
+                                # Display the full search term analysis table
+                                st.subheader("📋 Complete Brand Search Term Analysis")
+                                
+                                # Display filtered results
+                                st.dataframe(
+                                    brand_search_term_df,
+                                    use_container_width=True,
+                                    hide_index=True,
+                                    column_config={
+                                        "Search Term Impression Share": st.column_config.NumberColumn(
+                                            "Impression Share (%)",
+                                            format="%.2f%%"
+                                        ),
+                                        "CTR": st.column_config.NumberColumn(
+                                            "CTR (%)",
+                                            format="%.2f%%"
+                                        ),
+                                        "ACoS": st.column_config.NumberColumn(
+                                            "ACoS (%)",
+                                            format="%.2f%%"
+                                        ),
+                                        "ACR": st.column_config.NumberColumn(
+                                            "ACR (%)",
+                                            format="%.2f%%"
+                                        )
+                                    }
+                                )
+                                
+                                # Download button for the processed data
+                                csv_data = brand_search_term_df.to_csv(index=False)
+                                st.download_button(
+                                    label="📥 Download Brand Search Term Analysis",
+                                    data=csv_data,
+                                    file_name="brand_search_term_analysis.csv",
+                                    mime="text/csv",
+                                    key="download_brand_analysis"
+                                )
+                            else:
+                                st.warning("No brand search term data found.")
                 else:
-                    st.warning("No search term data found for the selected ASIN.")
+                    st.info("Please upload at least one CSV file (Product or Brand) to begin analysis.")
         else:
-            st.info("👆 Please upload both Excel and CSV files to begin sponsored product analysis.")
+            st.info("👆 Please upload the Excel file and at least one CSV file (Product or Brand) to begin sponsored product analysis.")
 
 if __name__ == "__main__":
     main()
