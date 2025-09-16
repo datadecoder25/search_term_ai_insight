@@ -256,12 +256,12 @@ def create_interactive_plots(filtered_df):
     return plots
 
 @st.cache_data
-def load_sponsored_product_data(excel_file, csv_product_file, csv_brand_file):
+def load_sponsored_product_data(excel_file, csv_product_file, csv_brand_file, csv_top_search_term_file):
     """
     Load and process sponsored product data from Excel and CSV files
     """
     if not excel_file:
-        return None, None, None
+        return None, None, None, None
     
     # Read Excel file - get available sheets first
     try:
@@ -281,13 +281,14 @@ def load_sponsored_product_data(excel_file, csv_product_file, csv_brand_file):
         # Read CSV files
         st_imp_product_df = pd.read_csv(csv_product_file) if csv_product_file else None
         st_imp_brand_df = pd.read_csv(csv_brand_file) if csv_brand_file else None
+        st_imp_top_search_term_df = pd.read_csv(csv_top_search_term_file, header=1) if csv_top_search_term_file else None
         
-        return df_ad_product, st_imp_product_df, st_imp_brand_df
+        return df_ad_product, st_imp_product_df, st_imp_brand_df, st_imp_top_search_term_df
     except Exception as e:
         st.error(f"Error loading files: {str(e)}")
-        return None, None, None
+        return None, None, None, None
 
-def process_search_term_analysis(df_ad_product, st_imp_df, selected_asin):
+def process_search_term_analysis(df_ad_product, st_imp_df, selected_asin, df_top_search_term_final):
     """
     Process search term analysis for a selected ASIN
     """
@@ -359,10 +360,16 @@ def process_search_term_analysis(df_ad_product, st_imp_df, selected_asin):
     final_df.columns = ['Search Term', 'Search Term Impression Rank', 
                        'Search Term Impression Share', 'Impressions', 'CTR',
                        'Total Orders', 'ACoS', 'ACR']
+
+    if df_top_search_term_final is not None:
+        try:
+            final_df = pd.merge(final_df, df_top_search_term_final, on='Search Term', how='left')
+        except:
+            pass
     
     return final_df
 
-def process_brand_search_term_analysis(st_imp_df):
+def process_brand_search_term_analysis(st_imp_df, df_top_search_term_final):
     """
     Process brand search term analysis for all campaigns (no ASIN filtering)
     Handles both 7 Day and 14 Day column formats
@@ -482,6 +489,12 @@ def process_brand_search_term_analysis(st_imp_df):
     display_columns.extend(['ACoS', 'ACR'])
     
     final_df.columns = display_columns
+
+    if df_top_search_term_final is not None:
+        try:
+            final_df = pd.merge(final_df, df_top_search_term_final, on='Search Term', how='left')
+        except:
+            pass
     
     return final_df
 
@@ -617,7 +630,7 @@ def main():
         # File upload section for sponsored product analysis
         st.subheader("📁 Upload Sponsored Product Data")
         
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         
         with col1:
             excel_file = st.file_uploader(
@@ -635,18 +648,26 @@ def main():
                 key="st_product_csv_uploader"
             )
             
-        with col3:
-            csv_brand_file = st.file_uploader(
-                "Upload Search Term Impression Share for Brand (CSV)",
-                type="csv",
-                help="Upload the search term impression share CSV file for brand analysis (14 Day data)",
-                key="st_brand_csv_uploader"
-            )
+            with col3:
+                csv_brand_file = st.file_uploader(
+                    "Upload Search Term Impression Share for Brand (CSV)",
+                    type="csv",
+                    help="Upload the search term impression share CSV file for brand analysis (14 Day data)",
+                    key="st_brand_csv_uploader"
+                )
+
+            with col4:
+                csv_top_search_term_file = st.file_uploader(
+                    "Upload Top Search Term (CSV)",
+                    type="csv",
+                    help="Upload the top search term CSV file",
+                    key="top_search_term_csv_uploader"
+                )
         
-        if excel_file and (csv_product_file or csv_brand_file):
+        if excel_file and (csv_product_file or csv_brand_file or csv_top_search_term_file):
             # Load sponsored product data
             with st.spinner("Loading sponsored product data..."):
-                df_ad_product, st_imp_product_df, st_imp_brand_df = load_sponsored_product_data(excel_file, csv_product_file, csv_brand_file)
+                df_ad_product, st_imp_product_df, st_imp_brand_df, st_imp_top_search_term_df = load_sponsored_product_data(excel_file, csv_product_file, csv_brand_file, csv_top_search_term_file)
             
             if df_ad_product is not None:
                 st.success("✅ Sponsored product data loaded successfully!")
@@ -694,10 +715,16 @@ def main():
                                 help="Choose an ASIN to analyze search term performance",
                                 key="product_asin_selector"
                             )
-                            
+                            if st_imp_top_search_term_df is not None:
+                                try:
+                                    st_imp_top_search_term_df['top_3_click_share'] = st_imp_top_search_term_df['Top Clicked Product #1: Click Share'] + st_imp_top_search_term_df['Top Clicked Product #2: Click Share'] + st_imp_top_search_term_df['Top Clicked Product #3: Click Share']
+                                    st_imp_top_search_term_df['top_3_conversion_share'] = st_imp_top_search_term_df['Top Clicked Product #1: Conversion Share'] + st_imp_top_search_term_df['Top Clicked Product #2: Conversion Share'] + st_imp_top_search_term_df['Top Clicked Product #3: Conversion Share']
+                                    df_top_search_term_final = st_imp_top_search_term_df[['Search Term','top_3_click_share','top_3_conversion_share']]
+                                except:
+                                    pass
                             # Process and display search term analysis for product
                             with st.spinner("Processing product search term analysis..."):
-                                product_search_term_df = process_search_term_analysis(df_ad_product, st_imp_product_df, selected_asin)
+                                product_search_term_df = process_search_term_analysis(df_ad_product, st_imp_product_df, selected_asin, df_top_search_term_final)
                             
                             if product_search_term_df is not None and len(product_search_term_df) > 0:
                                 st.subheader(f"📊 Product Search Term Analysis for ASIN: **{selected_asin}**")
@@ -752,7 +779,7 @@ def main():
                             
                             # Process and display search term analysis for brand
                             with st.spinner("Processing brand search term analysis..."):
-                                brand_search_term_df = process_brand_search_term_analysis(st_imp_brand_df)
+                                brand_search_term_df = process_brand_search_term_analysis(st_imp_brand_df, df_top_search_term_final)
                             
                             if brand_search_term_df is not None and len(brand_search_term_df) > 0:
                                 # Display key metrics for selected search terms
