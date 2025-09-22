@@ -658,13 +658,13 @@ def main():
 
             with col4:
                 csv_top_search_term_file = st.file_uploader(
-                    "Upload Top Search Term (CSV)",
+                    "Upload Top Search Term (CSV) - Optional",
                     type="csv",
-                    help="Upload the top search term CSV file",
+                    help="Optional: Upload the top search term CSV file to add click share and conversion share columns",
                     key="top_search_term_csv_uploader"
                 )
         
-        if excel_file and (csv_product_file or csv_brand_file or csv_top_search_term_file):
+        if excel_file and (csv_product_file or csv_brand_file):
             # Load sponsored product data
             with st.spinner("Loading sponsored product data..."):
                 df_ad_product, st_imp_product_df, st_imp_brand_df, st_imp_top_search_term_df = load_sponsored_product_data(excel_file, csv_product_file, csv_brand_file, csv_top_search_term_file)
@@ -672,9 +672,21 @@ def main():
             if df_ad_product is not None:
                 st.success("✅ Sponsored product data loaded successfully!")
                 
+                # Process top search term data if available
+                df_top_search_term_final = None
+                if st_imp_top_search_term_df is not None:
+                    try:
+                        st_imp_top_search_term_df['top_3_click_share'] = st_imp_top_search_term_df['Top Clicked Product #1: Click Share'] + st_imp_top_search_term_df['Top Clicked Product #2: Click Share'] + st_imp_top_search_term_df['Top Clicked Product #3: Click Share']
+                        st_imp_top_search_term_df['top_3_conversion_share'] = st_imp_top_search_term_df['Top Clicked Product #1: Conversion Share'] + st_imp_top_search_term_df['Top Clicked Product #2: Conversion Share'] + st_imp_top_search_term_df['Top Clicked Product #3: Conversion Share']
+                        df_top_search_term_final = st_imp_top_search_term_df[['Search Term','top_3_click_share','top_3_conversion_share']]
+                        st.success("✅ Top search terms data processed successfully! Extra columns will be added to analysis.")
+                    except Exception as e:
+                        st.warning(f"⚠️ Could not process top search terms data: {str(e)}")
+                        df_top_search_term_final = None
+                
                 # Display data summary
                 st.subheader("📈 Data Summary")
-                col1, col2, col3, col4 = st.columns(4)
+                col1, col2, col3, col4, col5 = st.columns(5)
                 
                 with col1:
                     st.metric("Total Ad Records", len(df_ad_product))
@@ -690,6 +702,11 @@ def main():
                         st.metric("Brand Search Terms", len(st_imp_brand_df))
                     else:
                         st.metric("Brand Search Terms", "N/A")
+                with col5:
+                    if df_top_search_term_final is not None:
+                        st.metric("Top Search Terms", len(df_top_search_term_final))
+                    else:
+                        st.metric("Top Search Terms", "Not Loaded")
                 
                 # Create analysis tabs for Product and Brand
                 analysis_tabs = []
@@ -715,13 +732,6 @@ def main():
                                 help="Choose an ASIN to analyze search term performance",
                                 key="product_asin_selector"
                             )
-                            if st_imp_top_search_term_df is not None:
-                                try:
-                                    st_imp_top_search_term_df['top_3_click_share'] = st_imp_top_search_term_df['Top Clicked Product #1: Click Share'] + st_imp_top_search_term_df['Top Clicked Product #2: Click Share'] + st_imp_top_search_term_df['Top Clicked Product #3: Click Share']
-                                    st_imp_top_search_term_df['top_3_conversion_share'] = st_imp_top_search_term_df['Top Clicked Product #1: Conversion Share'] + st_imp_top_search_term_df['Top Clicked Product #2: Conversion Share'] + st_imp_top_search_term_df['Top Clicked Product #3: Conversion Share']
-                                    df_top_search_term_final = st_imp_top_search_term_df[['Search Term','top_3_click_share','top_3_conversion_share']]
-                                except:
-                                    pass
                             # Process and display search term analysis for product
                             with st.spinner("Processing product search term analysis..."):
                                 product_search_term_df = process_search_term_analysis(df_ad_product, st_imp_product_df, selected_asin, df_top_search_term_final)
@@ -839,7 +849,7 @@ def main():
                 else:
                     st.info("Please upload at least one CSV file (Product or Brand) to begin analysis.")
         else:
-            st.info("👆 Please upload the Excel file and at least one CSV file (Product or Brand) to begin sponsored product analysis.")
+            st.info("👆 Please upload the Excel file and at least one CSV file (Product or Brand) to begin sponsored product analysis. The Top Search Terms CSV file is optional and will add extra columns if provided.")
 
 if __name__ == "__main__":
     main()
