@@ -256,12 +256,12 @@ def create_interactive_plots(filtered_df):
     return plots
 
 @st.cache_data
-def load_sponsored_product_data(excel_file, csv_product_file, csv_brand_file, csv_top_search_term_file):
+def load_sponsored_product_data(excel_file, csv_product_file, csv_brand_file, csv_top_search_term_file, csv_targeting_report_file):
     """
     Load and process sponsored product data from Excel and CSV files
     """
     if not excel_file:
-        return None, None, None, None
+        return None, None, None, None, None
     
     # Read Excel file - get available sheets first
     try:
@@ -282,13 +282,13 @@ def load_sponsored_product_data(excel_file, csv_product_file, csv_brand_file, cs
         st_imp_product_df = pd.read_csv(csv_product_file) if csv_product_file else None
         st_imp_brand_df = pd.read_csv(csv_brand_file) if csv_brand_file else None
         st_imp_top_search_term_df = pd.read_csv(csv_top_search_term_file, header=1) if csv_top_search_term_file else None
-        
-        return df_ad_product, st_imp_product_df, st_imp_brand_df, st_imp_top_search_term_df
+        df_targeting_report_final = pd.read_excel(csv_targeting_report_file) if csv_targeting_report_file else None
+        return df_ad_product, st_imp_product_df, st_imp_brand_df, st_imp_top_search_term_df, df_targeting_report_final
     except Exception as e:
         st.error(f"Error loading files: {str(e)}")
-        return None, None, None, None
+        return None, None, None, None, None
 
-def process_search_term_analysis(df_ad_product, st_imp_df, selected_asin, df_top_search_term_final):
+def process_search_term_analysis(df_ad_product, st_imp_df, selected_asin, df_top_search_term_final, df_targeting_report_final):
     """
     Process search term analysis for a selected ASIN
     """
@@ -297,7 +297,7 @@ def process_search_term_analysis(df_ad_product, st_imp_df, selected_asin, df_top
     
     # Filter search term impression data for these campaigns
     filtered_st_imp_df = st_imp_df[st_imp_df['Campaign Name'].isin(campaigns)].copy()
-    
+
     # Ensure numeric columns are properly formatted
     numeric_columns = ['Search Term Impression Rank', 'Search Term Impression Share', 
                       'Impressions', 'Clicks', 'Spend', '7 Day Total Orders (#)', 
@@ -366,6 +366,15 @@ def process_search_term_analysis(df_ad_product, st_imp_df, selected_asin, df_top
             final_df = pd.merge(final_df, df_top_search_term_final, on='Search Term', how='left')
         except:
             pass
+
+    if df_targeting_report_final is not None:
+        try:
+            filtered_targeting_report_df = df_targeting_report_final[df_targeting_report_final['Campaign Name'].isin(campaigns)].reset_index(drop=True)
+            filtered_targeting_report_df_excat_match = filtered_targeting_report_df[filtered_targeting_report_df['Match Type'] == 'EXACT'].reset_index(drop=True)
+            filtered_targeting_report_df_excat_match = filtered_targeting_report_df_excat_match[['Targeting','Match Type']]
+            final_df = pd.merge(final_df, filtered_targeting_report_df_excat_match, left_on='Search Term', right_on='Targeting', how='left').drop(columns=['Targeting'])
+        except:
+            pass
     
     return final_df
 
@@ -379,10 +388,11 @@ def process_brand_search_term_analysis(st_imp_df, df_top_search_term_final):
         
     # Make a copy of the dataframe
     filtered_st_imp_df = st_imp_df.copy()
+
     
     # Check available columns and determine the correct column names
     available_columns = filtered_st_imp_df.columns.tolist()
-    
+        
     # Determine orders and sales column names (could be 7 Day or 14 Day)
     orders_col = None
     sales_col = None
@@ -630,7 +640,7 @@ def main():
         # File upload section for sponsored product analysis
         st.subheader("📁 Upload Sponsored Product Data")
         
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3, col4, col5 = st.columns(5)
         
         with col1:
             excel_file = st.file_uploader(
@@ -663,11 +673,19 @@ def main():
                     help="Optional: Upload the top search term CSV file to add click share and conversion share columns",
                     key="top_search_term_csv_uploader"
                 )
+
+            with col5:
+                csv_targeting_report_file = st.file_uploader(
+                    "Upload Targeting Report (Excel) - Optional",
+                    type=["xlsx", "xls"],
+                    help="Optional: Upload the Targeting Report excel file to add target column",
+                    key="targeting_report_excel_uploader"
+                )
         
         if excel_file and (csv_product_file or csv_brand_file):
             # Load sponsored product data
             with st.spinner("Loading sponsored product data..."):
-                df_ad_product, st_imp_product_df, st_imp_brand_df, st_imp_top_search_term_df = load_sponsored_product_data(excel_file, csv_product_file, csv_brand_file, csv_top_search_term_file)
+                df_ad_product, st_imp_product_df, st_imp_brand_df, st_imp_top_search_term_df, df_targeting_report_final = load_sponsored_product_data(excel_file, csv_product_file, csv_brand_file, csv_top_search_term_file, csv_targeting_report_file)
             
             if df_ad_product is not None:
                 st.success("✅ Sponsored product data loaded successfully!")
@@ -734,7 +752,7 @@ def main():
                             )
                             # Process and display search term analysis for product
                             with st.spinner("Processing product search term analysis..."):
-                                product_search_term_df = process_search_term_analysis(df_ad_product, st_imp_product_df, selected_asin, df_top_search_term_final)
+                                product_search_term_df = process_search_term_analysis(df_ad_product, st_imp_product_df, selected_asin, df_top_search_term_final, df_targeting_report_final)
                             
                             if product_search_term_df is not None and len(product_search_term_df) > 0:
                                 st.subheader(f"📊 Product Search Term Analysis for ASIN: **{selected_asin}**")
