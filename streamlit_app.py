@@ -298,6 +298,21 @@ def process_search_term_analysis(df_ad_product, st_imp_df, selected_asin, df_top
     # Filter search term impression data for these campaigns
     filtered_st_imp_df = st_imp_df[st_imp_df['Campaign Name'].isin(campaigns)].copy()
 
+    # Process targeting report data for match type columns
+    targeting_data = {'EXACT': set(), 'PHRASE': set(), 'BROAD': set()}
+    
+    if df_targeting_report_final is not None:
+        try:
+            filtered_targeting_report_df = df_targeting_report_final[df_targeting_report_final['Campaign Name'].isin(campaigns)].reset_index(drop=True)
+            
+            # Create sets of targeting terms for each match type
+            for match_type in ['EXACT', 'PHRASE', 'BROAD']:
+                match_data = filtered_targeting_report_df[filtered_targeting_report_df['Match Type'] == match_type]
+                targeting_data[match_type] = set(match_data['Targeting'].dropna().unique())
+        except Exception as e:
+            # If there's an error processing targeting data, continue with empty sets
+            pass
+    
     # Ensure numeric columns are properly formatted
     numeric_columns = ['Search Term Impression Rank', 'Search Term Impression Share', 
                       'Impressions', 'Clicks', 'Spend', '7 Day Total Orders (#)', 
@@ -367,14 +382,24 @@ def process_search_term_analysis(df_ad_product, st_imp_df, selected_asin, df_top
         except:
             pass
 
+    # Add match type columns
     if df_targeting_report_final is not None:
         try:
-            filtered_targeting_report_df = df_targeting_report_final[df_targeting_report_final['Campaign Name'].isin(campaigns)].reset_index(drop=True)
-            filtered_targeting_report_df_excat_match = filtered_targeting_report_df[filtered_targeting_report_df['Match Type'] == 'EXACT'].reset_index(drop=True)
-            filtered_targeting_report_df_excat_match = filtered_targeting_report_df_excat_match[['Targeting','Match Type']]
-            final_df = pd.merge(final_df, filtered_targeting_report_df_excat_match, left_on='Search Term', right_on='Targeting', how='left').drop(columns=['Targeting'])
-        except:
-            pass
+            # Add columns for each match type
+            final_df['EXACT_Match'] = final_df['Search Term'].apply(
+                lambda x: 'Targeted' if x in targeting_data['EXACT'] else 'Not Targeted'
+            )
+            final_df['PHRASE_Match'] = final_df['Search Term'].apply(
+                lambda x: 'Targeted' if x in targeting_data['PHRASE'] else 'Not Targeted'
+            )
+            final_df['BROAD_Match'] = final_df['Search Term'].apply(
+                lambda x: 'Targeted' if x in targeting_data['BROAD'] else 'Not Targeted'
+            )
+        except Exception as e:
+            # If there's an error, add empty columns
+            final_df['EXACT_Match'] = 'Not Targeted'
+            final_df['PHRASE_Match'] = 'Not Targeted'
+            final_df['BROAD_Match'] = 'Not Targeted'
     
     return final_df
 
@@ -388,11 +413,10 @@ def process_brand_search_term_analysis(st_imp_df, df_top_search_term_final):
         
     # Make a copy of the dataframe
     filtered_st_imp_df = st_imp_df.copy()
-
     
     # Check available columns and determine the correct column names
     available_columns = filtered_st_imp_df.columns.tolist()
-        
+    
     # Determine orders and sales column names (could be 7 Day or 14 Day)
     orders_col = None
     sales_col = None
@@ -702,9 +726,13 @@ def main():
                         st.warning(f"⚠️ Could not process top search terms data: {str(e)}")
                         df_top_search_term_final = None
                 
+                # Process targeting report data if available
+                if df_targeting_report_final is not None:
+                    st.success("✅ Targeting report data loaded successfully! Match type columns will be added to analysis.")
+                
                 # Display data summary
                 st.subheader("📈 Data Summary")
-                col1, col2, col3, col4, col5 = st.columns(5)
+                col1, col2, col3, col4, col5, col6 = st.columns(6)
                 
                 with col1:
                     st.metric("Total Ad Records", len(df_ad_product))
@@ -725,6 +753,11 @@ def main():
                         st.metric("Top Search Terms", len(df_top_search_term_final))
                     else:
                         st.metric("Top Search Terms", "Not Loaded")
+                with col6:
+                    if df_targeting_report_final is not None:
+                        st.metric("Targeting Records", len(df_targeting_report_final))
+                    else:
+                        st.metric("Targeting Records", "Not Loaded")
                 
                 # Create analysis tabs for Product and Brand
                 analysis_tabs = []
@@ -781,6 +814,18 @@ def main():
                                         "ACR": st.column_config.NumberColumn(
                                             "ACR (%)",
                                             format="%.2f%%"
+                                        ),
+                                        "EXACT_Match": st.column_config.TextColumn(
+                                            "EXACT Match",
+                                            help="Shows if this search term is targeted with EXACT match type"
+                                        ),
+                                        "PHRASE_Match": st.column_config.TextColumn(
+                                            "PHRASE Match",
+                                            help="Shows if this search term is targeted with PHRASE match type"
+                                        ),
+                                        "BROAD_Match": st.column_config.TextColumn(
+                                            "BROAD Match",
+                                            help="Shows if this search term is targeted with BROAD match type"
                                         )
                                     }
                                 )
@@ -805,69 +850,81 @@ def main():
                             st.subheader("🏷️ Brand Search Term Analysis")
                             st.caption("Analysis across all campaigns (no ASIN filtering) - 14 Day Attribution")
                             
-                            # Process and display search term analysis for brand
-                            with st.spinner("Processing brand search term analysis..."):
-                                brand_search_term_df = process_brand_search_term_analysis(st_imp_brand_df, df_top_search_term_final)
+                        # Process and display search term analysis for brand
+                        with st.spinner("Processing brand search term analysis..."):
+                            brand_search_term_df = process_brand_search_term_analysis(st_imp_brand_df, df_top_search_term_final)
                             
-                            if brand_search_term_df is not None and len(brand_search_term_df) > 0:
-                                # Display key metrics for selected search terms
-                                three_farmers_data = brand_search_term_df[brand_search_term_df['Search Term'] == 'three farmers']
-                                if not three_farmers_data.empty:
-                                    st.info("**🔍 'Three Farmers' Search Term Metrics (Brand - 14 Day):**")
-                                    col1, col2, col3, col4 = st.columns(4)
-                                    
-                                    with col1:
-                                        st.metric("Impressions", f"{three_farmers_data.iloc[0]['Impressions']:,.0f}")
-                                    with col2:
-                                        st.metric("CTR", f"{three_farmers_data.iloc[0]['CTR']:.2f}%" if pd.notnull(three_farmers_data.iloc[0]['CTR']) else "N/A")
-                                    with col3:
-                                        st.metric("Total Orders", f"{three_farmers_data.iloc[0]['Total Orders']:,.0f}")
-                                    with col4:
-                                        st.metric("ACoS", f"{three_farmers_data.iloc[0]['ACoS']:.2f}%" if pd.notnull(three_farmers_data.iloc[0]['ACoS']) else "N/A")
+                        if brand_search_term_df is not None and len(brand_search_term_df) > 0:
+                            # Display key metrics for selected search terms
+                            three_farmers_data = brand_search_term_df[brand_search_term_df['Search Term'] == 'three farmers']
+                            if not three_farmers_data.empty:
+                                st.info("**🔍 'Three Farmers' Search Term Metrics (Brand - 14 Day):**")
+                                col1, col2, col3, col4 = st.columns(4)
                                 
-                                # Display the full search term analysis table
-                                st.subheader("📋 Complete Brand Search Term Analysis")
-                                
-                                # Display filtered results
-                                st.dataframe(
-                                    brand_search_term_df,
-                                    use_container_width=True,
-                                    hide_index=True,
-                                    column_config={
-                                        "Search Term Impression Share": st.column_config.NumberColumn(
-                                            "Impression Share (%)",
-                                            format="%.2f%%"
-                                        ),
-                                        "CTR": st.column_config.NumberColumn(
-                                            "CTR (%)",
-                                            format="%.2f%%"
-                                        ),
-                                        "ACoS": st.column_config.NumberColumn(
-                                            "ACoS (%)",
-                                            format="%.2f%%"
-                                        ),
-                                        "ACR": st.column_config.NumberColumn(
-                                            "ACR (%)",
-                                            format="%.2f%%"
-                                        )
-                                    }
-                                )
-                                
-                                # Download button for the processed data
-                                csv_data = brand_search_term_df.to_csv(index=False)
-                                st.download_button(
-                                    label="📥 Download Brand Search Term Analysis",
-                                    data=csv_data,
-                                    file_name="brand_search_term_analysis.csv",
-                                    mime="text/csv",
-                                    key="download_brand_analysis"
-                                )
-                            else:
-                                st.warning("No brand search term data found.")
+                                with col1:
+                                    st.metric("Impressions", f"{three_farmers_data.iloc[0]['Impressions']:,.0f}")
+                                with col2:
+                                    st.metric("CTR", f"{three_farmers_data.iloc[0]['CTR']:.2f}%" if pd.notnull(three_farmers_data.iloc[0]['CTR']) else "N/A")
+                                with col3:
+                                    st.metric("Total Orders", f"{three_farmers_data.iloc[0]['Total Orders']:,.0f}")
+                                with col4:
+                                    st.metric("ACoS", f"{three_farmers_data.iloc[0]['ACoS']:.2f}%" if pd.notnull(three_farmers_data.iloc[0]['ACoS']) else "N/A")
+                            
+                            # Display the full search term analysis table
+                            st.subheader("📋 Complete Brand Search Term Analysis")
+                            
+                            # Display filtered results
+                            st.dataframe(
+                                brand_search_term_df,
+                                use_container_width=True,
+                                hide_index=True,
+                                column_config={
+                                    "Search Term Impression Share": st.column_config.NumberColumn(
+                                        "Impression Share (%)",
+                                        format="%.2f%%"
+                                    ),
+                                    "CTR": st.column_config.NumberColumn(
+                                        "CTR (%)",
+                                        format="%.2f%%"
+                                    ),
+                                    "ACoS": st.column_config.NumberColumn(
+                                        "ACoS (%)",
+                                        format="%.2f%%"
+                                    ),
+                                    "ACR": st.column_config.NumberColumn(
+                                        "ACR (%)",
+                                        format="%.2f%%"
+                                    ),
+                                    # "EXACT_Match": st.column_config.TextColumn(
+                                    #     "EXACT Match",
+                                    #     help="Shows if this search term is targeted with EXACT match type"
+                                    # ),
+                                    # "PHRASE_Match": st.column_config.TextColumn(
+                                    #     "PHRASE Match",
+                                    #     help="Shows if this search term is targeted with PHRASE match type"
+                                    # ),
+                                    # "BROAD_Match": st.column_config.TextColumn(
+                                    #     "BROAD Match",
+                                    #     help="Shows if this search term is targeted with BROAD match type"
+                                    # )
+                                }
+                            )
+                            
+                            # Download button for the processed data
+                            csv_data = brand_search_term_df.to_csv(index=False)
+                            st.download_button(
+                                label="📥 Download Brand Search Term Analysis",
+                                data=csv_data,
+                                file_name="brand_search_term_analysis.csv",
+                                mime="text/csv",
+                                key="download_brand_analysis"
+                            )
+                        else:
+                            st.warning("No brand search term data found.")
                 else:
                     st.info("Please upload at least one CSV file (Product or Brand) to begin analysis.")
         else:
-            st.info("👆 Please upload the Excel file and at least one CSV file (Product or Brand) to begin sponsored product analysis. The Top Search Terms CSV file is optional and will add extra columns if provided.")
+            st.info("👆 Please upload the Excel file and at least one CSV file (Product or Brand) to begin sponsored product analysis. The Top Search Terms CSV file and Targeting Report Excel file are optional and will add extra columns if provided.")
 
 if __name__ == "__main__":
     main()
