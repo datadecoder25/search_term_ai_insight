@@ -4,6 +4,8 @@ import plotly.graph_objects as go
 from datetime import datetime
 import io
 import numpy as np
+import os
+import glob
 
 # Set page configuration
 st.set_page_config(
@@ -14,21 +16,123 @@ st.set_page_config(
 )
 
 @st.cache_data
-def load_and_combine_data(uploaded_files):
+def load_and_combine_data_from_folder(folder_path):
     """
-    Load and combine all uploaded CSV files
+    Load and combine all CSV files from a specified folder for Tab 1
     """
-    if not uploaded_files:
+    if not folder_path:
         return None
     
-    files = []
-    for uploaded_file in uploaded_files:
-        # Read the uploaded file
-        df_temp = pd.read_csv(uploaded_file, header=1)  # Skip first row, use second as header
-        files.append(df_temp)
+    try:
+        # Check if folder exists
+        if not os.path.exists(folder_path):
+            st.error(f"Folder path does not exist: {folder_path}")
+            return None
+        
+        # Find all CSV files in the folder
+        csv_files = glob.glob(os.path.join(folder_path, "*.csv"))
+        
+        if not csv_files:
+            st.warning(f"No CSV files found in folder: {folder_path}")
+            return None
+        
+        st.info(f"Found {len(csv_files)} CSV files in folder")
+        
+        files = []
+        for csv_file in csv_files:
+            try:
+                # Read the CSV file
+                df_temp = pd.read_csv(csv_file, header=1)  # Skip first row, use second as header
+                files.append(df_temp)
+                st.success(f"✅ Loaded: {os.path.basename(csv_file)}")
+            except Exception as e:
+                st.warning(f"⚠️ Could not load {os.path.basename(csv_file)}: {str(e)}")
+                continue
+        
+        if not files:
+            st.error("No CSV files could be loaded successfully")
+            return None
+        
+        combined_df = pd.concat(files, ignore_index=True)
+        st.success(f"✅ Successfully combined {len(files)} CSV files with {len(combined_df)} total records")
+        return combined_df
+        
+    except Exception as e:
+        st.error(f"Error reading folder: {str(e)}")
+        return None
+
+@st.cache_data
+def auto_detect_files_from_folder(folder_path):
+    """
+    Auto-detect and load files from folder based on naming patterns for Tab 2
+    """
+    if not folder_path:
+        return None, None, None, None, None
     
-    combined_df = pd.concat(files, ignore_index=True)
-    return combined_df
+    try:
+        # Check if folder exists
+        if not os.path.exists(folder_path):
+            st.error(f"Folder path does not exist: {folder_path}")
+            return None, None, None, None, None
+        
+        # Find all files in the folder
+        all_files = glob.glob(os.path.join(folder_path, "*"))
+        
+        if not all_files:
+            st.warning(f"No files found in folder: {folder_path}")
+            return None, None, None, None, None
+        
+        # Initialize variables for detected files
+        excel_file = None
+        csv_product_file = None
+        csv_brand_file = None
+        csv_top_search_term_file = None
+        csv_targeting_report_file = None
+        
+        detected_files = []
+        
+        for file_path in all_files:
+            filename = os.path.basename(file_path).lower()
+            
+            # SP_Ad_product + Excel format
+            if 'sp_ad_product' in filename and (filename.endswith('.xlsx') or filename.endswith('.xls')):
+                excel_file = file_path
+                detected_files.append(f"📊 Ad Product Report: {os.path.basename(file_path)}")
+            
+            # SP_ST_imp + CSV format
+            elif 'sp_st_imp' in filename and filename.endswith('.csv'):
+                csv_product_file = file_path
+                detected_files.append(f"📈 Product Search Terms: {os.path.basename(file_path)}")
+            
+            # SB_ST_imp + CSV format
+            elif 'sb_st_imp' in filename and filename.endswith('.csv'):
+                csv_brand_file = file_path
+                detected_files.append(f"🏷️ Brand Search Terms: {os.path.basename(file_path)}")
+            
+            # Top_search_terms + CSV format
+            elif 'top_search_terms' in filename and filename.endswith('.csv'):
+                csv_top_search_term_file = file_path
+                detected_files.append(f"🔍 Top Search Terms: {os.path.basename(file_path)}")
+            
+            # SP_Targeting + Excel format
+            elif 'sp_targeting' in filename and (filename.endswith('.xlsx') or filename.endswith('.xls')):
+                csv_targeting_report_file = file_path
+                detected_files.append(f"🎯 Targeting Report: {os.path.basename(file_path)}")
+        
+        # Show detected files
+        if detected_files:
+            st.success(f"📁 Auto-detected {len(detected_files)} files:")
+            for file_info in detected_files:
+                st.info(file_info)
+        else:
+            st.warning("⚠️ No files matching the expected patterns were found")
+            st.caption("Expected patterns: SP_Ad_product.xlsx, SP_ST_imp.csv, SB_ST_imp.csv, Top_search_terms.csv, SP_Targeting.xlsx")
+        
+        return excel_file, csv_product_file, csv_brand_file, csv_top_search_term_file, csv_targeting_report_file
+        
+    except Exception as e:
+        st.error(f"Error reading folder: {str(e)}")
+        return None, None, None, None, None
 
 def fill_missing_dates(data: pd.DataFrame, date_column: str, freq: str) -> pd.DataFrame:
     """
@@ -256,16 +360,16 @@ def create_interactive_plots(filtered_df):
     return plots
 
 @st.cache_data
-def load_sponsored_product_data(excel_file, csv_product_file, csv_brand_file, csv_top_search_term_file, csv_targeting_report_file):
+def load_sponsored_product_data_from_paths(excel_file_path, csv_product_file_path, csv_brand_file_path, csv_top_search_term_file_path, csv_targeting_report_file_path):
     """
-    Load and process sponsored product data from Excel and CSV files
+    Load and process sponsored product data from file paths
     """
-    if not excel_file:
+    if not excel_file_path:
         return None, None, None, None, None
     
     # Read Excel file - get available sheets first
     try:
-        all_sheets = pd.read_excel(excel_file, sheet_name=None)
+        all_sheets = pd.read_excel(excel_file_path, sheet_name=None)
         # Find the sheet that contains the actual data (not 'Sheet1')
         data_sheet = None
         for sheet_name in all_sheets.keys():
@@ -274,15 +378,16 @@ def load_sponsored_product_data(excel_file, csv_product_file, csv_brand_file, cs
                 break
         
         if data_sheet:
-            df_ad_product = pd.read_excel(excel_file, sheet_name=data_sheet)
+            df_ad_product = pd.read_excel(excel_file_path, sheet_name=data_sheet)
         else:
-            df_ad_product = pd.read_excel(excel_file)
+            df_ad_product = pd.read_excel(excel_file_path)
             
         # Read CSV files
-        st_imp_product_df = pd.read_csv(csv_product_file) if csv_product_file else None
-        st_imp_brand_df = pd.read_csv(csv_brand_file) if csv_brand_file else None
-        st_imp_top_search_term_df = pd.read_csv(csv_top_search_term_file, header=1) if csv_top_search_term_file else None
-        df_targeting_report_final = pd.read_excel(csv_targeting_report_file) if csv_targeting_report_file else None
+        st_imp_product_df = pd.read_csv(csv_product_file_path) if csv_product_file_path else None
+        st_imp_brand_df = pd.read_csv(csv_brand_file_path) if csv_brand_file_path else None
+        st_imp_top_search_term_df = pd.read_csv(csv_top_search_term_file_path, header=1) if csv_top_search_term_file_path else None
+        df_targeting_report_final = pd.read_excel(csv_targeting_report_file_path) if csv_targeting_report_file_path else None
+        
         return df_ad_product, st_imp_product_df, st_imp_brand_df, st_imp_top_search_term_df, df_targeting_report_final
     except Exception as e:
         st.error(f"Error loading files: {str(e)}")
@@ -542,19 +647,51 @@ def main():
     
     with main_tab1:
         # Data Upload & Setup Section
-        st.header("📁 Data Upload & Configuration")
+        st.header("📁 Data Folder Configuration")
         
-        col1, col2 = st.columns([2, 1])
+        col1, col2 = st.columns([3, 1])
         
         with col1:
-            st.subheader("Upload CSV Files")
-            uploaded_files = st.file_uploader(
-                "Choose CSV files",
-                type="csv",
-                accept_multiple_files=True,
-                help="Upload multiple CSV files containing search query performance data",
-                key="csv_uploader"
+            st.subheader("📂 Search Query Performance Data Folder")
+            
+            # Show current working directory for reference
+            current_dir = os.getcwd()
+            st.caption(f"📍 **Current working directory:** `{current_dir}`")
+            
+            # Quick folder options
+            col_a, col_b = st.columns(2)
+            with col_a:
+                if st.button("📂 Use Current Directory", help="Use the current working directory", key="tab1_current_dir"):
+                    st.session_state.tab1_folder_path = current_dir
+            with col_b:
+                if st.button("🏠 Use Downloads Folder", help="Use your Downloads folder", key="tab1_downloads"):
+                    downloads_path = os.path.join(os.path.expanduser("~"), "Downloads")
+                    st.session_state.tab1_folder_path = downloads_path
+            
+            folder_path_tab1 = st.text_input(
+                "Enter folder path containing CSV files:",
+                placeholder="e.g., /Users/username/Documents/csv_folder",
+                help="Enter the full path to the folder containing your search query performance CSV files",
+                key="tab1_folder_path"
             )
+            
+            # Preview files in the folder
+            if folder_path_tab1 and os.path.exists(folder_path_tab1):
+                csv_files = glob.glob(os.path.join(folder_path_tab1, "*.csv"))
+                if csv_files:
+                    st.success(f"📊 Found {len(csv_files)} CSV files in the folder:")
+                    with st.expander("📋 CSV Files in Folder", expanded=False):
+                        for i, file_path in enumerate(csv_files, 1):
+                            st.text(f"{i}. {os.path.basename(file_path)}")
+                else:
+                    st.warning("⚠️ No CSV files found in this folder")
+            elif folder_path_tab1:
+                st.error("❌ Folder path does not exist")
+            
+            # Add some example folder paths for convenience
+            st.caption("💡 **Tips:**")
+            st.caption("• All CSV files in the folder will be automatically loaded and combined")
+            st.caption("• Make sure all CSV files have the same structure")
         
         with col2:
             st.subheader("Analysis Settings")
@@ -572,16 +709,19 @@ def main():
             if st.button("🔄 Clear Cache", type="secondary"):
                 st.cache_data.clear()
                 st.success("Cache cleared!")
+            
+            # Load data button
+            load_data_tab1 = st.button("📊 Load Data from Folder", type="primary", disabled=not folder_path_tab1)
         
-        # Load data from uploaded files
+        # Load data from folder
         combined_df = None
         
-        if uploaded_files:
-            with st.spinner("Processing uploaded files..."):
-                combined_df = load_and_combine_data(uploaded_files)
+        if folder_path_tab1 and load_data_tab1:
+            with st.spinner("Processing CSV files from folder..."):
+                combined_df = load_and_combine_data_from_folder(folder_path_tab1)
         
         if combined_df is None:
-            st.info("👆 Please upload CSV files to begin analysis.")
+            st.info("👆 Please enter a folder path and click 'Load Data from Folder' to begin analysis.")
         else:
             # Process data
             with st.spinner("Processing data and filling missing dates..."):
@@ -662,54 +802,62 @@ def main():
         st.markdown("**Analyze search term performance for sponsored product campaigns**")
         
         # File upload section for sponsored product analysis
-        st.subheader("📁 Upload Sponsored Product Data")
+        st.subheader("📁 Sponsored Product Data Folder")
         
-        col1, col2, col3, col4, col5 = st.columns(5)
+        # Show current working directory for reference
+        current_dir = os.getcwd()
+        st.caption(f"📍 **Current working directory:** `{current_dir}`")
         
-        with col1:
-            excel_file = st.file_uploader(
-                "Upload Ad Product Report (Excel)",
-                type=["xlsx", "xls"],
-                help="Upload the sponsored product ad report Excel file",
-                key="excel_uploader"
-            )
+        # Quick folder options for tab 2
+        col_a, col_b = st.columns(2)
+        with col_a:
+            if st.button("📂 Use Current Directory", help="Use the current working directory", key="tab2_current_dir"):
+                st.session_state.tab2_folder_path = current_dir
+        with col_b:
+            if st.button("🏠 Use Downloads Folder", help="Use your Downloads folder", key="tab2_downloads"):
+                downloads_path = os.path.join(os.path.expanduser("~"), "Downloads")
+                st.session_state.tab2_folder_path = downloads_path
         
-        with col2:
-            csv_product_file = st.file_uploader(
-                "Upload Search Term Impression Share for Product (CSV)",
-                type="csv",
-                help="Upload the search term impression share CSV file for product analysis (7 Day data)",
-                key="st_product_csv_uploader"
-            )
+        folder_path_tab2 = st.text_input(
+            "Enter folder path containing sponsored product files:",
+            placeholder="e.g., /Users/username/Documents/sponsored_product_folder",
+            help="Enter the full path to the folder containing your sponsored product analysis files",
+            key="tab2_folder_path"
+        )
+        
+        # Auto-detect and load files button
+        detect_files = st.button("🔍 Auto-Detect and Load Files", type="primary", disabled=not folder_path_tab2)
+        
+        # Expected file patterns info
+        with st.expander("📋 Expected File Naming Patterns", expanded=False):
+            st.markdown("""
+            **The system will automatically detect files based on these patterns (case-insensitive):**
             
-            with col3:
-                csv_brand_file = st.file_uploader(
-                    "Upload Search Term Impression Share for Brand (CSV)",
-                    type="csv",
-                    help="Upload the search term impression share CSV file for brand analysis (14 Day data)",
-                    key="st_brand_csv_uploader"
-                )
-
-            with col4:
-                csv_top_search_term_file = st.file_uploader(
-                    "Upload Top Search Term (CSV) - Optional",
-                    type="csv",
-                    help="Optional: Upload the top search term CSV file to add click share and conversion share columns",
-                    key="top_search_term_csv_uploader"
-                )
-
-            with col5:
-                csv_targeting_report_file = st.file_uploader(
-                    "Upload Targeting Report (Excel) - Optional",
-                    type=["xlsx", "xls"],
-                    help="Optional: Upload the Targeting Report excel file to add target column",
-                    key="targeting_report_excel_uploader"
-                )
+            - **SP_Ad_product** + `.xlsx/.xls` → Ad Product Report (Excel) ✅ Required
+            - **SP_ST_imp** + `.csv` → Product Search Term Impression Share (CSV) 
+            - **SB_ST_imp** + `.csv` → Brand Search Term Impression Share (CSV)
+            - **Top_search_terms** + `.csv` → Top Search Terms (CSV) 🔸 Optional
+            - **SP_Targeting** + `.xlsx/.xls` → Targeting Report (Excel) 🔸 Optional
+            
+            **Examples:**
+            - `SP_Ad_product_report.xlsx` ✅
+            - `SP_ST_imp_data_Aug.csv` ✅  
+            - `SB_ST_imp_brand_data.csv` ✅
+            - `Top_search_terms_monthly.csv` ✅
+            - `SP_Targeting_report.xlsx` ✅
+            """)
         
-        if excel_file and (csv_product_file or csv_brand_file):
+        # Auto-detect files if button is clicked
+        if folder_path_tab2 and detect_files:
+            with st.spinner("Auto-detecting files from folder..."):
+                excel_file, csv_product_file, csv_brand_file, csv_top_search_term_file, csv_targeting_report_file = auto_detect_files_from_folder(folder_path_tab2)
+        else:
+            excel_file, csv_product_file, csv_brand_file, csv_top_search_term_file, csv_targeting_report_file = None, None, None, None, None
+        
+        if excel_file or csv_product_file or csv_brand_file:
             # Load sponsored product data
             with st.spinner("Loading sponsored product data..."):
-                df_ad_product, st_imp_product_df, st_imp_brand_df, st_imp_top_search_term_df, df_targeting_report_final = load_sponsored_product_data(excel_file, csv_product_file, csv_brand_file, csv_top_search_term_file, csv_targeting_report_file)
+                df_ad_product, st_imp_product_df, st_imp_brand_df, st_imp_top_search_term_df, df_targeting_report_final = load_sponsored_product_data_from_paths(excel_file, csv_product_file, csv_brand_file, csv_top_search_term_file, csv_targeting_report_file)
             
             if df_ad_product is not None:
                 st.success("✅ Sponsored product data loaded successfully!")
@@ -922,9 +1070,9 @@ def main():
                         else:
                             st.warning("No brand search term data found.")
                 else:
-                    st.info("Please upload at least one CSV file (Product or Brand) to begin analysis.")
+                    st.info("Please use the auto-detect feature to load files from the folder.")
         else:
-            st.info("👆 Please upload the Excel file and at least one CSV file (Product or Brand) to begin sponsored product analysis. The Top Search Terms CSV file and Targeting Report Excel file are optional and will add extra columns if provided.")
+            st.info("👆 Please enter a folder path and click 'Auto-Detect and Load Files' to begin sponsored product analysis.")
 
 if __name__ == "__main__":
     main()
