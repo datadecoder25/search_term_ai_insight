@@ -16,123 +16,87 @@ st.set_page_config(
 )
 
 @st.cache_data
-def load_and_combine_data_from_folder(folder_path):
+def load_and_combine_uploaded_csvs(uploaded_files):
     """
-    Load and combine all CSV files from a specified folder for Tab 1
+    Load and combine all uploaded CSV files for Tab 1
     """
-    if not folder_path:
+    if not uploaded_files:
         return None
     
-    try:
-        # Check if folder exists
-        if not os.path.exists(folder_path):
-            st.error(f"Folder path does not exist: {folder_path}")
-            return None
-        
-        # Find all CSV files in the folder
-        csv_files = glob.glob(os.path.join(folder_path, "*.csv"))
-        
-        if not csv_files:
-            st.warning(f"No CSV files found in folder: {folder_path}")
-            return None
-        
-        st.info(f"Found {len(csv_files)} CSV files in folder")
-        
-        files = []
-        for csv_file in csv_files:
-            try:
-                # Read the CSV file
-                df_temp = pd.read_csv(csv_file, header=1)  # Skip first row, use second as header
-                files.append(df_temp)
-                st.success(f"✅ Loaded: {os.path.basename(csv_file)}")
-            except Exception as e:
-                st.warning(f"⚠️ Could not load {os.path.basename(csv_file)}: {str(e)}")
-                continue
-        
-        if not files:
-            st.error("No CSV files could be loaded successfully")
-            return None
-        
-        combined_df = pd.concat(files, ignore_index=True)
-        st.success(f"✅ Successfully combined {len(files)} CSV files with {len(combined_df)} total records")
-        return combined_df
-        
-    except Exception as e:
-        st.error(f"Error reading folder: {str(e)}")
+    files = []
+    for uploaded_file in uploaded_files:
+        try:
+            # Read the uploaded file
+            df_temp = pd.read_csv(uploaded_file, header=1)  # Skip first row, use second as header
+            files.append(df_temp)
+            st.success(f"✅ Loaded: {uploaded_file.name}")
+        except Exception as e:
+            st.warning(f"⚠️ Could not load {uploaded_file.name}: {str(e)}")
+            continue
+    
+    if not files:
+        st.error("No CSV files could be loaded successfully")
         return None
+    
+    combined_df = pd.concat(files, ignore_index=True)
+    st.success(f"✅ Successfully combined {len(files)} CSV files with {len(combined_df)} total records")
+    return combined_df
 
 @st.cache_data
-def auto_detect_files_from_folder(folder_path):
+def auto_detect_uploaded_files(uploaded_files):
     """
-    Auto-detect and load files from folder based on naming patterns for Tab 2
+    Auto-detect and categorize uploaded files based on naming patterns for Tab 2
     """
-    if not folder_path:
+    if not uploaded_files:
         return None, None, None, None, None
     
-    try:
-        # Check if folder exists
-        if not os.path.exists(folder_path):
-            st.error(f"Folder path does not exist: {folder_path}")
-            return None, None, None, None, None
+    # Initialize variables for detected files
+    excel_file = None
+    csv_product_file = None
+    csv_brand_file = None
+    csv_top_search_term_file = None
+    csv_targeting_report_file = None
+    
+    detected_files = []
+    
+    for uploaded_file in uploaded_files:
+        filename = uploaded_file.name.lower()
         
-        # Find all files in the folder
-        all_files = glob.glob(os.path.join(folder_path, "*"))
+        # SP_Ad_product + Excel format
+        if 'sp_ad_product' in filename and (filename.endswith('.xlsx') or filename.endswith('.xls')):
+            excel_file = uploaded_file
+            detected_files.append(f"📊 Ad Product Report: {uploaded_file.name}")
         
-        if not all_files:
-            st.warning(f"No files found in folder: {folder_path}")
-            return None, None, None, None, None
+        # SP_ST_imp + CSV format
+        elif 'sp_st_imp' in filename and filename.endswith('.csv'):
+            csv_product_file = uploaded_file
+            detected_files.append(f"📈 Product Search Terms: {uploaded_file.name}")
         
-        # Initialize variables for detected files
-        excel_file = None
-        csv_product_file = None
-        csv_brand_file = None
-        csv_top_search_term_file = None
-        csv_targeting_report_file = None
+        # SB_ST_imp + CSV format
+        elif 'sb_st_imp' in filename and filename.endswith('.csv'):
+            csv_brand_file = uploaded_file
+            detected_files.append(f"🏷️ Brand Search Terms: {uploaded_file.name}")
         
-        detected_files = []
+        # Top_search_terms + CSV format
+        elif 'top_search_terms' in filename and filename.endswith('.csv'):
+            csv_top_search_term_file = uploaded_file
+            detected_files.append(f"🔍 Top Search Terms: {uploaded_file.name}")
         
-        for file_path in all_files:
-            filename = os.path.basename(file_path).lower()
-            
-            # SP_Ad_product + Excel format
-            if 'sp_ad_product' in filename and (filename.endswith('.xlsx') or filename.endswith('.xls')):
-                excel_file = file_path
-                detected_files.append(f"📊 Ad Product Report: {os.path.basename(file_path)}")
-            
-            # SP_ST_imp + CSV format
-            elif 'sp_st_imp' in filename and filename.endswith('.csv'):
-                csv_product_file = file_path
-                detected_files.append(f"📈 Product Search Terms: {os.path.basename(file_path)}")
-            
-            # SB_ST_imp + CSV format
-            elif 'sb_st_imp' in filename and filename.endswith('.csv'):
-                csv_brand_file = file_path
-                detected_files.append(f"🏷️ Brand Search Terms: {os.path.basename(file_path)}")
-            
-            # Top_search_terms + CSV format
-            elif 'top_search_terms' in filename and filename.endswith('.csv'):
-                csv_top_search_term_file = file_path
-                detected_files.append(f"🔍 Top Search Terms: {os.path.basename(file_path)}")
-            
-            # SP_Targeting + Excel format
-            elif 'sp_targeting' in filename and (filename.endswith('.xlsx') or filename.endswith('.xls')):
-                csv_targeting_report_file = file_path
-                detected_files.append(f"🎯 Targeting Report: {os.path.basename(file_path)}")
-        
-        # Show detected files
-        if detected_files:
-            st.success(f"📁 Auto-detected {len(detected_files)} files:")
-            for file_info in detected_files:
-                st.info(file_info)
-        else:
-            st.warning("⚠️ No files matching the expected patterns were found")
-            st.caption("Expected patterns: SP_Ad_product.xlsx, SP_ST_imp.csv, SB_ST_imp.csv, Top_search_terms.csv, SP_Targeting.xlsx")
-        
-        return excel_file, csv_product_file, csv_brand_file, csv_top_search_term_file, csv_targeting_report_file
-        
-    except Exception as e:
-        st.error(f"Error reading folder: {str(e)}")
-        return None, None, None, None, None
+        # SP_Targeting + Excel format
+        elif 'sp_targeting' in filename and (filename.endswith('.xlsx') or filename.endswith('.xls')):
+            csv_targeting_report_file = uploaded_file
+            detected_files.append(f"🎯 Targeting Report: {uploaded_file.name}")
+    
+    # Show detected files
+    if detected_files:
+        st.success(f"📁 Auto-detected {len(detected_files)} files:")
+        for file_info in detected_files:
+            st.info(file_info)
+    else:
+        st.warning("⚠️ No files matching the expected patterns were found")
+        st.caption("Expected patterns: SP_Ad_product.xlsx, SP_ST_imp.csv, SB_ST_imp.csv, Top_search_terms.csv, SP_Targeting.xlsx")
+    
+    return excel_file, csv_product_file, csv_brand_file, csv_top_search_term_file, csv_targeting_report_file
 
 def fill_missing_dates(data: pd.DataFrame, date_column: str, freq: str) -> pd.DataFrame:
     """
@@ -360,16 +324,16 @@ def create_interactive_plots(filtered_df):
     return plots
 
 @st.cache_data
-def load_sponsored_product_data_from_paths(excel_file_path, csv_product_file_path, csv_brand_file_path, csv_top_search_term_file_path, csv_targeting_report_file_path):
+def load_sponsored_product_data_from_uploads(excel_file, csv_product_file, csv_brand_file, csv_top_search_term_file, csv_targeting_report_file):
     """
-    Load and process sponsored product data from file paths
+    Load and process sponsored product data from uploaded files
     """
-    if not excel_file_path:
+    if not excel_file:
         return None, None, None, None, None
     
-    # Read Excel file - get available sheets first
     try:
-        all_sheets = pd.read_excel(excel_file_path, sheet_name=None)
+        # Read Excel file - get available sheets first
+        all_sheets = pd.read_excel(excel_file, sheet_name=None)
         # Find the sheet that contains the actual data (not 'Sheet1')
         data_sheet = None
         for sheet_name in all_sheets.keys():
@@ -378,15 +342,15 @@ def load_sponsored_product_data_from_paths(excel_file_path, csv_product_file_pat
                 break
         
         if data_sheet:
-            df_ad_product = pd.read_excel(excel_file_path, sheet_name=data_sheet)
+            df_ad_product = pd.read_excel(excel_file, sheet_name=data_sheet)
         else:
-            df_ad_product = pd.read_excel(excel_file_path)
+            df_ad_product = pd.read_excel(excel_file)
             
         # Read CSV files
-        st_imp_product_df = pd.read_csv(csv_product_file_path) if csv_product_file_path else None
-        st_imp_brand_df = pd.read_csv(csv_brand_file_path) if csv_brand_file_path else None
-        st_imp_top_search_term_df = pd.read_csv(csv_top_search_term_file_path, header=1) if csv_top_search_term_file_path else None
-        df_targeting_report_final = pd.read_excel(csv_targeting_report_file_path) if csv_targeting_report_file_path else None
+        st_imp_product_df = pd.read_csv(csv_product_file) if csv_product_file else None
+        st_imp_brand_df = pd.read_csv(csv_brand_file) if csv_brand_file else None
+        st_imp_top_search_term_df = pd.read_csv(csv_top_search_term_file, header=1) if csv_top_search_term_file else None
+        df_targeting_report_final = pd.read_excel(csv_targeting_report_file) if csv_targeting_report_file else None
         
         return df_ad_product, st_imp_product_df, st_imp_brand_df, st_imp_top_search_term_df, df_targeting_report_final
     except Exception as e:
@@ -647,51 +611,33 @@ def main():
     
     with main_tab1:
         # Data Upload & Setup Section
-        st.header("📁 Data Folder Configuration")
+        st.header("📁 Data Upload & Configuration")
         
         col1, col2 = st.columns([3, 1])
         
         with col1:
-            st.subheader("📂 Search Query Performance Data Folder")
+            st.subheader("📂 Upload Search Query Performance CSV Files")
             
-            # Show current working directory for reference
-            current_dir = os.getcwd()
-            st.caption(f"📍 **Current working directory:** `{current_dir}`")
-            
-            # Quick folder options
-            col_a, col_b = st.columns(2)
-            with col_a:
-                if st.button("📂 Use Current Directory", help="Use the current working directory", key="tab1_current_dir"):
-                    st.session_state.tab1_folder_path = current_dir
-            with col_b:
-                if st.button("🏠 Use Downloads Folder", help="Use your Downloads folder", key="tab1_downloads"):
-                    downloads_path = os.path.join(os.path.expanduser("~"), "Downloads")
-                    st.session_state.tab1_folder_path = downloads_path
-            
-            folder_path_tab1 = st.text_input(
-                "Enter folder path containing CSV files:",
-                placeholder="e.g., /Users/username/Documents/csv_folder",
-                help="Enter the full path to the folder containing your search query performance CSV files",
-                key="tab1_folder_path"
+            uploaded_files = st.file_uploader(
+                "Upload all CSV files for Search Query Performance analysis:",
+                type="csv",
+                accept_multiple_files=True,
+                help="Upload multiple CSV files containing search query performance data. All files will be automatically combined.",
+                key="csv_uploader_tab1"
             )
             
-            # Preview files in the folder
-            if folder_path_tab1 and os.path.exists(folder_path_tab1):
-                csv_files = glob.glob(os.path.join(folder_path_tab1, "*.csv"))
-                if csv_files:
-                    st.success(f"📊 Found {len(csv_files)} CSV files in the folder:")
-                    with st.expander("📋 CSV Files in Folder", expanded=False):
-                        for i, file_path in enumerate(csv_files, 1):
-                            st.text(f"{i}. {os.path.basename(file_path)}")
-                else:
-                    st.warning("⚠️ No CSV files found in this folder")
-            elif folder_path_tab1:
-                st.error("❌ Folder path does not exist")
+            # Show uploaded files
+            if uploaded_files:
+                st.success(f"📊 Uploaded {len(uploaded_files)} CSV files:")
+                with st.expander("📋 Uploaded Files", expanded=False):
+                    for i, uploaded_file in enumerate(uploaded_files, 1):
+                        st.text(f"{i}. {uploaded_file.name}")
             
-            # Add some example folder paths for convenience
+            # Add some tips
             st.caption("💡 **Tips:**")
-            st.caption("• All CSV files in the folder will be automatically loaded and combined")
+            st.caption("• All CSV files will be automatically loaded and combined")
             st.caption("• Make sure all CSV files have the same structure")
+            st.caption("• Files should contain 'Search Query', 'Reporting Date' columns")
         
         with col2:
             st.subheader("Analysis Settings")
@@ -711,17 +657,17 @@ def main():
                 st.success("Cache cleared!")
             
             # Load data button
-            load_data_tab1 = st.button("📊 Load Data from Folder", type="primary", disabled=not folder_path_tab1)
+            load_data_tab1 = st.button("📊 Process Uploaded Files", type="primary", disabled=not uploaded_files)
         
-        # Load data from folder
+        # Load data from uploaded files
         combined_df = None
         
-        if folder_path_tab1 and load_data_tab1:
-            with st.spinner("Processing CSV files from folder..."):
-                combined_df = load_and_combine_data_from_folder(folder_path_tab1)
+        if uploaded_files and load_data_tab1:
+            with st.spinner("Processing uploaded CSV files..."):
+                combined_df = load_and_combine_uploaded_csvs(uploaded_files)
         
         if combined_df is None:
-            st.info("👆 Please enter a folder path and click 'Load Data from Folder' to begin analysis.")
+            st.info("👆 Please upload CSV files and click 'Process Uploaded Files' to begin analysis.")
         else:
             # Process data
             with st.spinner("Processing data and filling missing dates..."):
@@ -802,31 +748,15 @@ def main():
         st.markdown("**Analyze search term performance for sponsored product campaigns**")
         
         # File upload section for sponsored product analysis
-        st.subheader("📁 Sponsored Product Data Folder")
+        st.subheader("📁 Upload Sponsored Product Files")
         
-        # Show current working directory for reference
-        current_dir = os.getcwd()
-        st.caption(f"📍 **Current working directory:** `{current_dir}`")
-        
-        # Quick folder options for tab 2
-        col_a, col_b = st.columns(2)
-        with col_a:
-            if st.button("📂 Use Current Directory", help="Use the current working directory", key="tab2_current_dir"):
-                st.session_state.tab2_folder_path = current_dir
-        with col_b:
-            if st.button("🏠 Use Downloads Folder", help="Use your Downloads folder", key="tab2_downloads"):
-                downloads_path = os.path.join(os.path.expanduser("~"), "Downloads")
-                st.session_state.tab2_folder_path = downloads_path
-        
-        folder_path_tab2 = st.text_input(
-            "Enter folder path containing sponsored product files:",
-            placeholder="e.g., /Users/username/Documents/sponsored_product_folder",
-            help="Enter the full path to the folder containing your sponsored product analysis files",
-            key="tab2_folder_path"
+        uploaded_files_tab2 = st.file_uploader(
+            "Upload all files for Sponsored Product analysis:",
+            type=["csv", "xlsx", "xls"],
+            accept_multiple_files=True,
+            help="Upload all your sponsored product files (CSV and Excel). The system will automatically detect which file is which based on naming patterns.",
+            key="files_uploader_tab2"
         )
-        
-        # Auto-detect and load files button
-        detect_files = st.button("🔍 Auto-Detect and Load Files", type="primary", disabled=not folder_path_tab2)
         
         # Expected file patterns info
         with st.expander("📋 Expected File Naming Patterns", expanded=False):
@@ -847,77 +777,81 @@ def main():
             - `SP_Targeting_report.xlsx` ✅
             """)
         
-        # Auto-detect files if button is clicked
-        if folder_path_tab2 and detect_files:
-            with st.spinner("Auto-detecting files from folder..."):
-                excel_file, csv_product_file, csv_brand_file, csv_top_search_term_file, csv_targeting_report_file = auto_detect_files_from_folder(folder_path_tab2)
-        else:
-            excel_file, csv_product_file, csv_brand_file, csv_top_search_term_file, csv_targeting_report_file = None, None, None, None, None
-        
-        if excel_file or csv_product_file or csv_brand_file:
-            # Load sponsored product data
-            with st.spinner("Loading sponsored product data..."):
-                df_ad_product, st_imp_product_df, st_imp_brand_df, st_imp_top_search_term_df, df_targeting_report_final = load_sponsored_product_data_from_paths(excel_file, csv_product_file, csv_brand_file, csv_top_search_term_file, csv_targeting_report_file)
+        # Process uploaded files
+        if uploaded_files_tab2:
+            st.success(f"📁 Uploaded {len(uploaded_files_tab2)} files")
             
-            if df_ad_product is not None:
-                st.success("✅ Sponsored product data loaded successfully!")
+            # Auto-detect and categorize files
+            with st.spinner("Auto-detecting file types..."):
+                excel_file, csv_product_file, csv_brand_file, csv_top_search_term_file, csv_targeting_report_file = auto_detect_uploaded_files(uploaded_files_tab2)
+            
+            # Process button
+            process_files = st.button("🔍 Process Detected Files", type="primary")
+            
+            if process_files and (excel_file or csv_product_file or csv_brand_file):
+                # Load sponsored product data
+                with st.spinner("Loading sponsored product data..."):
+                    df_ad_product, st_imp_product_df, st_imp_brand_df, st_imp_top_search_term_df, df_targeting_report_final = load_sponsored_product_data_from_uploads(excel_file, csv_product_file, csv_brand_file, csv_top_search_term_file, csv_targeting_report_file)
                 
-                # Process top search term data if available
-                df_top_search_term_final = None
-                if st_imp_top_search_term_df is not None:
-                    try:
-                        st_imp_top_search_term_df['top_3_click_share'] = st_imp_top_search_term_df['Top Clicked Product #1: Click Share'] + st_imp_top_search_term_df['Top Clicked Product #2: Click Share'] + st_imp_top_search_term_df['Top Clicked Product #3: Click Share']
-                        st_imp_top_search_term_df['top_3_conversion_share'] = st_imp_top_search_term_df['Top Clicked Product #1: Conversion Share'] + st_imp_top_search_term_df['Top Clicked Product #2: Conversion Share'] + st_imp_top_search_term_df['Top Clicked Product #3: Conversion Share']
-                        df_top_search_term_final = st_imp_top_search_term_df[['Search Term','top_3_click_share','top_3_conversion_share']]
-                        st.success("✅ Top search terms data processed successfully! Extra columns will be added to analysis.")
-                    except Exception as e:
-                        st.warning(f"⚠️ Could not process top search terms data: {str(e)}")
-                        df_top_search_term_final = None
+                if df_ad_product is not None:
+                    st.success("✅ Sponsored product data loaded successfully!")
                 
-                # Process targeting report data if available
-                if df_targeting_report_final is not None:
-                    st.success("✅ Targeting report data loaded successfully! Match type columns will be added to analysis.")
-                
-                # Display data summary
-                st.subheader("📈 Data Summary")
-                col1, col2, col3, col4, col5, col6 = st.columns(6)
-                
-                with col1:
-                    st.metric("Total Ad Records", len(df_ad_product))
-                with col2:
-                    st.metric("Unique ASINs", df_ad_product['Advertised ASIN'].nunique())
-                with col3:
-                    if st_imp_product_df is not None:
-                        st.metric("Product Search Terms", len(st_imp_product_df))
-                    else:
-                        st.metric("Product Search Terms", "N/A")
-                with col4:
-                    if st_imp_brand_df is not None:
-                        st.metric("Brand Search Terms", len(st_imp_brand_df))
-                    else:
-                        st.metric("Brand Search Terms", "N/A")
-                with col5:
-                    if df_top_search_term_final is not None:
-                        st.metric("Top Search Terms", len(df_top_search_term_final))
-                    else:
-                        st.metric("Top Search Terms", "Not Loaded")
-                with col6:
-                    if df_targeting_report_final is not None:
-                        st.metric("Targeting Records", len(df_targeting_report_final))
-                    else:
-                        st.metric("Targeting Records", "Not Loaded")
-                
-                # Create analysis tabs for Product and Brand
-                analysis_tabs = []
-                if st_imp_product_df is not None:
-                    analysis_tabs.append("📊 Product Analysis")
-                if st_imp_brand_df is not None:
-                    analysis_tabs.append("🏷️ Brand Analysis")
-                
-                if analysis_tabs:
-                    analysis_tab_objects = st.tabs(analysis_tabs)
+                    # Process top search term data if available
+                    df_top_search_term_final = None
+                    if st_imp_top_search_term_df is not None:
+                        try:
+                            st_imp_top_search_term_df['top_3_click_share'] = st_imp_top_search_term_df['Top Clicked Product #1: Click Share'] + st_imp_top_search_term_df['Top Clicked Product #2: Click Share'] + st_imp_top_search_term_df['Top Clicked Product #3: Click Share']
+                            st_imp_top_search_term_df['top_3_conversion_share'] = st_imp_top_search_term_df['Top Clicked Product #1: Conversion Share'] + st_imp_top_search_term_df['Top Clicked Product #2: Conversion Share'] + st_imp_top_search_term_df['Top Clicked Product #3: Conversion Share']
+                            df_top_search_term_final = st_imp_top_search_term_df[['Search Term','top_3_click_share','top_3_conversion_share']]
+                            st.success("✅ Top search terms data processed successfully! Extra columns will be added to analysis.")
+                        except Exception as e:
+                            st.warning(f"⚠️ Could not process top search terms data: {str(e)}")
+                            df_top_search_term_final = None
                     
-                    tab_index = 0
+                    # Process targeting report data if available
+                    if df_targeting_report_final is not None:
+                        st.success("✅ Targeting report data loaded successfully! Match type columns will be added to analysis.")
+                    
+                    # Display data summary
+                    st.subheader("📈 Data Summary")
+                    col1, col2, col3, col4, col5, col6 = st.columns(6)
+                    
+                    with col1:
+                        st.metric("Total Ad Records", len(df_ad_product))
+                    with col2:
+                        st.metric("Unique ASINs", df_ad_product['Advertised ASIN'].nunique())
+                    with col3:
+                        if st_imp_product_df is not None:
+                            st.metric("Product Search Terms", len(st_imp_product_df))
+                        else:
+                            st.metric("Product Search Terms", "N/A")
+                    with col4:
+                        if st_imp_brand_df is not None:
+                            st.metric("Brand Search Terms", len(st_imp_brand_df))
+                        else:
+                            st.metric("Brand Search Terms", "N/A")
+                    with col5:
+                        if df_top_search_term_final is not None:
+                            st.metric("Top Search Terms", len(df_top_search_term_final))
+                        else:
+                            st.metric("Top Search Terms", "Not Loaded")
+                    with col6:
+                        if df_targeting_report_final is not None:
+                            st.metric("Targeting Records", len(df_targeting_report_final))
+                        else:
+                            st.metric("Targeting Records", "Not Loaded")
+                    
+                    # Create analysis tabs for Product and Brand
+                    analysis_tabs = []
+                    if st_imp_product_df is not None:
+                        analysis_tabs.append("📊 Product Analysis")
+                    if st_imp_brand_df is not None:
+                        analysis_tabs.append("🏷️ Brand Analysis")
+                    
+                    if analysis_tabs:
+                        analysis_tab_objects = st.tabs(analysis_tabs)
+                        
+                        tab_index = 0
                     
                     # Product Analysis Tab
                     if st_imp_product_df is not None:
@@ -1069,10 +1003,10 @@ def main():
                             )
                         else:
                             st.warning("No brand search term data found.")
-                else:
-                    st.info("Please use the auto-detect feature to load files from the folder.")
+            else:
+                st.info("👆 Please upload files using the file uploader above, then click 'Process Detected Files' to begin analysis.")
         else:
-            st.info("👆 Please enter a folder path and click 'Auto-Detect and Load Files' to begin sponsored product analysis.")
+            st.info("👆 Please upload your sponsored product files (CSV and Excel) to begin analysis. The system will automatically detect file types based on naming patterns.")
 
 if __name__ == "__main__":
     main()
