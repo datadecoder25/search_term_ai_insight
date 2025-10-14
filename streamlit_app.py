@@ -853,10 +853,33 @@ def main():
                 with st.spinner("Loading sponsored product data..."):
                     df_ad_product, st_imp_product_df, st_imp_brand_df, st_imp_top_search_term_df, df_targeting_report_final, df_business_report = load_sponsored_product_data_from_uploads(excel_file, csv_product_file, csv_brand_file, csv_top_search_term_file, csv_targeting_report_file, csv_business_report_file)
                 
+                # Store data in session state for persistence across reruns
                 if df_ad_product is not None:
-                    st.success("✅ Sponsored product data loaded successfully!")
+                    st.session_state.tab2_df_ad_product = df_ad_product
+                    st.session_state.tab2_st_imp_product_df = st_imp_product_df
+                    st.session_state.tab2_st_imp_brand_df = st_imp_brand_df
+                    st.session_state.tab2_st_imp_top_search_term_df = st_imp_top_search_term_df
+                    st.session_state.tab2_df_targeting_report_final = df_targeting_report_final
+                    st.session_state.tab2_df_business_report = df_business_report
+                    st.session_state.tab2_data_loaded = True
+        
+        # Check if data exists in session state (either just loaded or from previous run)
+        if hasattr(st.session_state, 'tab2_data_loaded') and st.session_state.tab2_data_loaded:
+            # Retrieve data from session state
+            df_ad_product = st.session_state.tab2_df_ad_product
+            st_imp_product_df = st.session_state.tab2_st_imp_product_df
+            st_imp_brand_df = st.session_state.tab2_st_imp_brand_df
+            st_imp_top_search_term_df = st.session_state.tab2_st_imp_top_search_term_df
+            df_targeting_report_final = st.session_state.tab2_df_targeting_report_final
+            df_business_report = st.session_state.tab2_df_business_report
+            
+            if df_ad_product is not None:
+                st.success("✅ Sponsored product data loaded successfully!")
                 
-                    # Process top search term data if available
+                # Process top search term data if available (only process once)
+                if hasattr(st.session_state, 'tab2_df_top_search_term_final'):
+                    df_top_search_term_final = st.session_state.tab2_df_top_search_term_final
+                else:
                     df_top_search_term_final = None
                     if st_imp_top_search_term_df is not None:
                         try:
@@ -864,6 +887,8 @@ def main():
                             st_imp_top_search_term_df['top_3_conversion_share'] = st_imp_top_search_term_df['Top Clicked Product #1: Conversion Share'] + st_imp_top_search_term_df['Top Clicked Product #2: Conversion Share'] + st_imp_top_search_term_df['Top Clicked Product #3: Conversion Share']
                             df_top_search_term_final = st_imp_top_search_term_df[['Search Term','top_3_click_share','top_3_conversion_share']]
                             st.success("✅ Top search terms data processed successfully! Extra columns will be added to analysis.")
+                            # Store processed data in session state
+                            st.session_state.tab2_df_top_search_term_final = df_top_search_term_final
                         except Exception as e:
                             st.warning(f"⚠️ Could not process top search terms data: {str(e)}")
                             df_top_search_term_final = None
@@ -872,73 +897,82 @@ def main():
                     if df_targeting_report_final is not None:
                         st.success("✅ Targeting report data loaded successfully! Match type columns will be added to analysis.")
                     
-                    # Process business report data if available
-                    if df_business_report is not None:
-                        st.success("✅ Business report data loaded successfully! Business metrics will be available for analysis.")
-                    
-                    # Display data summary
-                    st.subheader("📈 Data Summary")
-                    col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
-                    
-                    with col1:
-                        st.metric("Total Ad Records", len(df_ad_product))
-                    with col2:
-                        st.metric("Unique ASINs", df_ad_product['Advertised ASIN'].nunique())
-                    with col3:
-                        if st_imp_product_df is not None:
-                            st.metric("Product Search Terms", len(st_imp_product_df))
-                        else:
-                            st.metric("Product Search Terms", "N/A")
-                    with col4:
-                        if st_imp_brand_df is not None:
-                            st.metric("Brand Search Terms", len(st_imp_brand_df))
-                        else:
-                            st.metric("Brand Search Terms", "N/A")
-                    with col5:
-                        if df_top_search_term_final is not None:
-                            st.metric("Top Search Terms", len(df_top_search_term_final))
-                        else:
-                            st.metric("Top Search Terms", "Not Loaded")
-                    with col6:
-                        if df_targeting_report_final is not None:
-                            st.metric("Targeting Records", len(df_targeting_report_final))
-                        else:
-                            st.metric("Targeting Records", "Not Loaded")
-                    with col7:
-                        if df_business_report is not None:
-                            st.metric("Business Report", len(df_business_report))
-                        else:
-                            st.metric("Business Report", "Not Loaded")
-                    
-                    # Create analysis tabs for Product and Brand
-                    analysis_tabs = []
+                # Process business report data if available
+                if df_business_report is not None:
+                    st.success("✅ Business report data loaded successfully! Business metrics will be available for analysis.")
+                
+                # Clear data button
+                if st.button("🗑️ Clear Loaded Data", type="secondary", help="Clear all loaded data and start fresh"):
+                    # Clear all tab2 session state data
+                    for key in list(st.session_state.keys()):
+                        if key.startswith('tab2_'):
+                            del st.session_state[key]
+                    st.rerun()
+                
+                # Display data summary
+                st.subheader("📈 Data Summary")
+                col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
+                
+                with col1:
+                    st.metric("Total Ad Records", len(df_ad_product))
+                with col2:
+                    st.metric("Unique ASINs", df_ad_product['Advertised ASIN'].nunique())
+                with col3:
                     if st_imp_product_df is not None:
-                        analysis_tabs.append("📊 Product Analysis")
+                        st.metric("Product Search Terms", len(st_imp_product_df))
+                    else:
+                        st.metric("Product Search Terms", "N/A")
+                with col4:
                     if st_imp_brand_df is not None:
-                        analysis_tabs.append("🏷️ Brand Analysis")
+                        st.metric("Brand Search Terms", len(st_imp_brand_df))
+                    else:
+                        st.metric("Brand Search Terms", "N/A")
+                with col5:
+                    if df_top_search_term_final is not None:
+                        st.metric("Top Search Terms", len(df_top_search_term_final))
+                    else:
+                        st.metric("Top Search Terms", "Not Loaded")
+                with col6:
+                    if df_targeting_report_final is not None:
+                        st.metric("Targeting Records", len(df_targeting_report_final))
+                    else:
+                        st.metric("Targeting Records", "Not Loaded")
+                with col7:
+                    if df_business_report is not None:
+                        st.metric("Business Report", len(df_business_report))
+                    else:
+                        st.metric("Business Report", "Not Loaded")
+                
+                # Create analysis tabs for Product and Brand
+                analysis_tabs = []
+                if st_imp_product_df is not None:
+                    analysis_tabs.append("📊 Product Analysis")
+                if st_imp_brand_df is not None:
+                    analysis_tabs.append("🏷️ Brand Analysis")
+                
+                if analysis_tabs:
+                    analysis_tab_objects = st.tabs(analysis_tabs)
                     
-                    if analysis_tabs:
-                        analysis_tab_objects = st.tabs(analysis_tabs)
+                    tab_index = 0
+                    
+                # Product Analysis Tab
+                if st_imp_product_df is not None:
+                    with analysis_tab_objects[tab_index]:
+                        st.subheader("🎯 ASIN Selection for Product Analysis")
                         
-                        tab_index = 0
-                    
-                    # Product Analysis Tab
-                    if st_imp_product_df is not None:
-                        with analysis_tab_objects[tab_index]:
-                            st.subheader("🎯 ASIN Selection for Product Analysis")
-                            available_asins = sorted(df_ad_product['Advertised ASIN'].unique())
-                            selected_asin = st.selectbox(
-                                "Select ASIN for Product Analysis:",
-                                options=available_asins,
-                                index=available_asins.index('B0BH6G8Q94') if 'B0BH6G8Q94' in available_asins else 0,
-                                help="Choose an ASIN to analyze search term performance",
-                                key="product_asin_selector"
-                            )
-                            # Process and display search term analysis for product
-                            with st.spinner("Processing product search term analysis..."):
-                                product_search_term_df = process_search_term_analysis(df_ad_product, st_imp_product_df, selected_asin, df_top_search_term_final, df_targeting_report_final, df_business_report)
-                            
-                            if product_search_term_df is not None and len(product_search_term_df) > 0:
+                        available_asins = sorted(df_ad_product['Advertised ASIN'].unique())
+                        selected_asin = st.selectbox(
+                            "Select ASIN for Product Analysis:",
+                            options=available_asins,
+                            index=available_asins.index('B0BH6G8Q94') if 'B0BH6G8Q94' in available_asins else 0,
+                            help="Choose an ASIN to analyze search term performance",
+                            key="product_asin_selector"
+                        )
+                        # Process and display search term analysis for product
+                        with st.spinner("Processing product search term analysis..."):
+                            product_search_term_df = process_search_term_analysis(df_ad_product, st_imp_product_df, selected_asin, df_top_search_term_final, df_targeting_report_final, df_business_report)
+                        
+                        if product_search_term_df is not None and len(product_search_term_df) > 0:
                                 st.subheader(f"📊 Product Search Term Analysis for ASIN: **{selected_asin}**")
                                 
                                 # Display the full search term analysis table
@@ -990,8 +1024,8 @@ def main():
                                     mime="text/csv",
                                     key="download_product_analysis"
                                 )
-                            else:
-                                st.warning("No product search term data found for the selected ASIN.")
+                        else:
+                            st.warning("No product search term data found for the selected ASIN.")
                         
                         tab_index += 1
                     
