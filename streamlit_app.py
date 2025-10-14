@@ -48,7 +48,7 @@ def auto_detect_uploaded_files(uploaded_files):
     Auto-detect and categorize uploaded files based on naming patterns for Tab 2
     """
     if not uploaded_files:
-        return None, None, None, None, None
+        return None, None, None, None, None, None
     
     # Initialize variables for detected files
     excel_file = None
@@ -56,6 +56,7 @@ def auto_detect_uploaded_files(uploaded_files):
     csv_brand_file = None
     csv_top_search_term_file = None
     csv_targeting_report_file = None
+    csv_business_report_file = None
     
     detected_files = []
     
@@ -86,6 +87,11 @@ def auto_detect_uploaded_files(uploaded_files):
         elif 'sp_targeting' in filename and (filename.endswith('.xlsx') or filename.endswith('.xls')):
             csv_targeting_report_file = uploaded_file
             detected_files.append(f"🎯 Targeting Report: {uploaded_file.name}")
+        
+        # BusinessReport + CSV format
+        elif 'businessreport' in filename and filename.endswith('.csv'):
+            csv_business_report_file = uploaded_file
+            detected_files.append(f"📋 Business Report: {uploaded_file.name}")
     
     # Show detected files
     if detected_files:
@@ -94,9 +100,9 @@ def auto_detect_uploaded_files(uploaded_files):
             st.info(file_info)
     else:
         st.warning("⚠️ No files matching the expected patterns were found")
-        st.caption("Expected patterns: SP_Ad_product.xlsx, SP_ST_imp.csv, SB_ST_imp.csv, Top_search_terms.csv, SP_Targeting.xlsx")
+        st.caption("Expected patterns: SP_Ad_product.xlsx, SP_ST_imp.csv, SB_ST_imp.csv, Top_search_terms.csv, SP_Targeting.xlsx, BusinessReport.csv")
     
-    return excel_file, csv_product_file, csv_brand_file, csv_top_search_term_file, csv_targeting_report_file
+    return excel_file, csv_product_file, csv_brand_file, csv_top_search_term_file, csv_targeting_report_file, csv_business_report_file
 
 def fill_missing_dates(data: pd.DataFrame, date_column: str, freq: str) -> pd.DataFrame:
     """
@@ -324,12 +330,12 @@ def create_interactive_plots(filtered_df):
     return plots
 
 @st.cache_data
-def load_sponsored_product_data_from_uploads(excel_file, csv_product_file, csv_brand_file, csv_top_search_term_file, csv_targeting_report_file):
+def load_sponsored_product_data_from_uploads(excel_file, csv_product_file, csv_brand_file, csv_top_search_term_file, csv_targeting_report_file, csv_business_report_file):
     """
     Load and process sponsored product data from uploaded files
     """
     if not excel_file:
-        return None, None, None, None, None
+        return None, None, None, None, None, None
     
     try:
         # Read Excel file - get available sheets first
@@ -351,13 +357,14 @@ def load_sponsored_product_data_from_uploads(excel_file, csv_product_file, csv_b
         st_imp_brand_df = pd.read_csv(csv_brand_file) if csv_brand_file else None
         st_imp_top_search_term_df = pd.read_csv(csv_top_search_term_file, header=1) if csv_top_search_term_file else None
         df_targeting_report_final = pd.read_excel(csv_targeting_report_file) if csv_targeting_report_file else None
+        df_business_report = pd.read_csv(csv_business_report_file) if csv_business_report_file else None
         
-        return df_ad_product, st_imp_product_df, st_imp_brand_df, st_imp_top_search_term_df, df_targeting_report_final
+        return df_ad_product, st_imp_product_df, st_imp_brand_df, st_imp_top_search_term_df, df_targeting_report_final, df_business_report
     except Exception as e:
         st.error(f"Error loading files: {str(e)}")
-        return None, None, None, None, None
+        return None, None, None, None, None, None
 
-def process_search_term_analysis(df_ad_product, st_imp_df, selected_asin, df_top_search_term_final, df_targeting_report_final):
+def process_search_term_analysis(df_ad_product, st_imp_df, selected_asin, df_top_search_term_final, df_targeting_report_final, df_business_report):
     """
     Process search term analysis for a selected ASIN
     """
@@ -444,6 +451,57 @@ def process_search_term_analysis(df_ad_product, st_imp_df, selected_asin, df_top
     final_df.columns = ['Search Term', 'Search Term Impression Rank', 
                        'Search Term Impression Share', 'Impressions', 'CTR',
                        'Total Orders', 'ACoS', 'ACR']
+
+    # Clean ACR column to remove % and convert to numeric for calculations
+    if 'ACR' in final_df.columns:
+        # Store original ACR for display
+        final_df['ACR_display'] = final_df['ACR'].astype(str)
+        
+        # Clean ACR for calculations
+        final_df['ACR_numeric'] = final_df['ACR'].astype(str).str.replace('%', '', regex=False)
+        final_df['ACR_numeric'] = pd.to_numeric(final_df['ACR_numeric'], errors='coerce')
+        
+        # Replace the ACR column with cleaned numeric values temporarily for calculations
+        final_df['ACR'] = final_df['ACR_numeric']
+
+    # Get baseline Unit Session Percentage from Business Report if available
+    baseline_unit_session_percentage = None
+    if df_business_report is not None:
+        try:
+            # Filter business report for the selected ASIN using (Child) ASIN column
+            business_asin_filter = df_business_report[df_business_report['(Child) ASIN'] == selected_asin]
+            
+            if not business_asin_filter.empty:
+                # Get the Unit Session Percentage value and clean it
+                raw_baseline = business_asin_filter['Unit Session Percentage'].iloc[0]
+                
+                # Remove % sign if present and convert to float
+                if isinstance(raw_baseline, str):
+                    baseline_unit_session_percentage = float(raw_baseline.replace('%', ''))
+                else:
+                    baseline_unit_session_percentage = float(raw_baseline)
+                
+                st.info(f"📋 Business Report Baseline: Unit Session Percentage for ASIN {selected_asin} = {baseline_unit_session_percentage}%")
+                
+                # Add baseline column to all search terms (display with % sign)
+                final_df['Baseline Unit Session %'] = f"{baseline_unit_session_percentage}%"
+                
+                # Calculate difference from baseline using numeric ACR values
+                final_df['ACR vs Baseline'] = (final_df['ACR'] - baseline_unit_session_percentage).round(2)
+            else:
+                st.warning(f"⚠️ No business report data found for ASIN: {selected_asin}")
+        except KeyError as e:
+            st.warning(f"⚠️ Expected column not found in Business Report: {str(e)}. Please check column names.")
+        except ValueError as e:
+            st.warning(f"⚠️ Could not convert Unit Session Percentage to number: {str(e)}")
+        except Exception as e:
+            st.warning(f"⚠️ Error processing Business Report data: {str(e)}")
+
+    # Restore ACR column to display format (with % signs) for final display
+    if 'ACR_display' in final_df.columns:
+        final_df['ACR'] = final_df['ACR_display']
+        # Clean up temporary columns
+        final_df = final_df.drop(['ACR_display', 'ACR_numeric'], axis=1)
 
     if df_top_search_term_final is not None:
         try:
@@ -768,6 +826,7 @@ def main():
             - **SB_ST_imp** + `.csv` → Brand Search Term Impression Share (CSV)
             - **Top_search_terms** + `.csv` → Top Search Terms (CSV) 🔸 Optional
             - **SP_Targeting** + `.xlsx/.xls` → Targeting Report (Excel) 🔸 Optional
+            - **BusinessReport** + `.csv` → Business Report (CSV) 🔸 Optional
             
             **Examples:**
             - `SP_Ad_product_report.xlsx` ✅
@@ -775,6 +834,7 @@ def main():
             - `SB_ST_imp_brand_data.csv` ✅
             - `Top_search_terms_monthly.csv` ✅
             - `SP_Targeting_report.xlsx` ✅
+            - `BusinessReport_Aug2024.csv` ✅
             """)
         
         # Process uploaded files
@@ -783,7 +843,7 @@ def main():
             
             # Auto-detect and categorize files
             with st.spinner("Auto-detecting file types..."):
-                excel_file, csv_product_file, csv_brand_file, csv_top_search_term_file, csv_targeting_report_file = auto_detect_uploaded_files(uploaded_files_tab2)
+                excel_file, csv_product_file, csv_brand_file, csv_top_search_term_file, csv_targeting_report_file, csv_business_report_file = auto_detect_uploaded_files(uploaded_files_tab2)
             
             # Process button
             process_files = st.button("🔍 Process Detected Files", type="primary")
@@ -791,7 +851,7 @@ def main():
             if process_files and (excel_file or csv_product_file or csv_brand_file):
                 # Load sponsored product data
                 with st.spinner("Loading sponsored product data..."):
-                    df_ad_product, st_imp_product_df, st_imp_brand_df, st_imp_top_search_term_df, df_targeting_report_final = load_sponsored_product_data_from_uploads(excel_file, csv_product_file, csv_brand_file, csv_top_search_term_file, csv_targeting_report_file)
+                    df_ad_product, st_imp_product_df, st_imp_brand_df, st_imp_top_search_term_df, df_targeting_report_final, df_business_report = load_sponsored_product_data_from_uploads(excel_file, csv_product_file, csv_brand_file, csv_top_search_term_file, csv_targeting_report_file, csv_business_report_file)
                 
                 if df_ad_product is not None:
                     st.success("✅ Sponsored product data loaded successfully!")
@@ -812,9 +872,13 @@ def main():
                     if df_targeting_report_final is not None:
                         st.success("✅ Targeting report data loaded successfully! Match type columns will be added to analysis.")
                     
+                    # Process business report data if available
+                    if df_business_report is not None:
+                        st.success("✅ Business report data loaded successfully! Business metrics will be available for analysis.")
+                    
                     # Display data summary
                     st.subheader("📈 Data Summary")
-                    col1, col2, col3, col4, col5, col6 = st.columns(6)
+                    col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
                     
                     with col1:
                         st.metric("Total Ad Records", len(df_ad_product))
@@ -840,6 +904,11 @@ def main():
                             st.metric("Targeting Records", len(df_targeting_report_final))
                         else:
                             st.metric("Targeting Records", "Not Loaded")
+                    with col7:
+                        if df_business_report is not None:
+                            st.metric("Business Report", len(df_business_report))
+                        else:
+                            st.metric("Business Report", "Not Loaded")
                     
                     # Create analysis tabs for Product and Brand
                     analysis_tabs = []
@@ -867,7 +936,7 @@ def main():
                             )
                             # Process and display search term analysis for product
                             with st.spinner("Processing product search term analysis..."):
-                                product_search_term_df = process_search_term_analysis(df_ad_product, st_imp_product_df, selected_asin, df_top_search_term_final, df_targeting_report_final)
+                                product_search_term_df = process_search_term_analysis(df_ad_product, st_imp_product_df, selected_asin, df_top_search_term_final, df_targeting_report_final, df_business_report)
                             
                             if product_search_term_df is not None and len(product_search_term_df) > 0:
                                 st.subheader(f"📊 Product Search Term Analysis for ASIN: **{selected_asin}**")
