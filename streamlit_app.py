@@ -364,6 +364,192 @@ def load_sponsored_product_data_from_uploads(excel_file, csv_product_file, csv_b
         st.error(f"Error loading files: {str(e)}")
         return None, None, None, None, None, None
 
+def process_impression_share_analysis(df_ad_product, st_imp_df, selected_asin, df_business_report, df_targeting_report_final):
+    """
+    Process impression share analysis for sponsored product search terms with business report benchmarking
+    """
+    # Get campaigns for the selected ASIN
+    campaigns = df_ad_product[df_ad_product['Advertised ASIN'] == selected_asin]['Campaign Name'].unique()
+    
+    # Filter search term impression data for these campaigns
+    filtered_st_imp_df = st_imp_df[st_imp_df['Campaign Name'].isin(campaigns)].copy()
+    
+    if len(filtered_st_imp_df) == 0:
+        return None, None
+    
+    # Get baseline Unit Session Percentage from Business Report
+    baseline_unit_session_percentage = None
+    if df_business_report is not None:
+        try:
+            business_asin_filter = df_business_report[df_business_report['(Child) ASIN'] == selected_asin]
+            if not business_asin_filter.empty:
+                raw_baseline = business_asin_filter['Unit Session Percentage'].iloc[0]
+                if isinstance(raw_baseline, str):
+                    baseline_unit_session_percentage = float(raw_baseline.replace('%', ''))
+                else:
+                    baseline_unit_session_percentage = float(raw_baseline)
+        except:
+            baseline_unit_session_percentage = None
+    
+    # Ensure numeric columns are properly formatted
+    numeric_columns = ['Search Term Impression Rank', 'Search Term Impression Share', 
+                      'Impressions', 'Clicks', 'Spend', '7 Day Total Orders (#)', 
+                      '7 Day Total Sales ($)']
+    
+    for col in numeric_columns:
+        if col in filtered_st_imp_df.columns:
+            filtered_st_imp_df[col] = filtered_st_imp_df[col].astype(str).str.replace('$', '', regex=False)
+            filtered_st_imp_df[col] = filtered_st_imp_df[col].astype(str).str.replace('%', '', regex=False)
+            filtered_st_imp_df[col] = pd.to_numeric(filtered_st_imp_df[col], errors='coerce')
+    
+    # Group by Customer Search Term
+    grouped_df = filtered_st_imp_df.groupby(['Customer Search Term']).agg({
+        'Search Term Impression Rank': 'mean',
+        'Search Term Impression Share': 'mean',
+        'Impressions': 'sum',
+        'Clicks': 'sum',
+        'Spend': 'sum',
+        '7 Day Total Orders (#)': 'sum',
+        '7 Day Total Sales ($)': 'sum'
+    }).reset_index()
+    
+    # Filter for search terms with ≥ 3 orders
+    grouped_df = grouped_df[grouped_df['7 Day Total Orders (#)'] >= 3].copy()
+    
+    if len(grouped_df) == 0:
+        return None, None
+    
+    # Convert impression share to decimal if it's in percentage
+    if grouped_df['Search Term Impression Share'].max() > 1:
+        grouped_df['Search Term Impression Share'] = grouped_df['Search Term Impression Share'] / 100
+    
+    # Calculate ACR (Ad Conversion Rate)
+    grouped_df['ACR'] = np.where(
+        grouped_df['Clicks'] != 0,
+        grouped_df['7 Day Total Orders (#)'] * 100 / grouped_df['Clicks'],
+        None
+    )
+    
+    # Convert impression share back to percentage for display
+    grouped_df['Search Term Impression Share'] = grouped_df['Search Term Impression Share'] * 100
+    
+    # Select final columns
+    final_df = grouped_df[['Customer Search Term', 'Search Term Impression Rank', 
+                          'Search Term Impression Share', 'Impressions', 'Clicks',
+                          '7 Day Total Orders (#)', 'ACR']].copy()
+    
+    final_df.columns = ['Search Term', 'Impression Rank', 'Impression Share %', 
+                       'Impressions', 'Clicks', 'Orders', 'ACR %']
+    
+    # Clean ACR column to remove % and convert to numeric for calculations
+    if 'ACR %' in final_df.columns:
+        # Store original ACR for display
+        final_df['ACR_display'] = final_df['ACR %'].astype(str)
+        
+        # Clean ACR for calculations
+        final_df['ACR_numeric'] = final_df['ACR %'].astype(str).str.replace('%', '', regex=False)
+        final_df['ACR_numeric'] = pd.to_numeric(final_df['ACR_numeric'], errors='coerce')
+        
+        # Replace the ACR % column with cleaned numeric values temporarily for calculations
+        final_df['ACR %'] = final_df['ACR_numeric']
+    
+    # Add baseline comparison if available
+    if baseline_unit_session_percentage is not None:
+        final_df['Baseline USP %'] = f"{baseline_unit_session_percentage}%"
+        final_df['ACR vs Baseline'] = (final_df['ACR %'] - baseline_unit_session_percentage).round(2)
+        
+        # Categorize search terms based on scenarios
+        def categorize_search_term(row):
+            acr = row['ACR %']
+            rank = row['Impression Rank']
+            baseline = baseline_unit_session_percentage
+            
+            if pd.isna(acr) or pd.isna(baseline):
+                return "Insufficient Data"
+            
+            # Scenario A: Conversion Rate Comparable/Higher than Baseline
+            if acr >= baseline:
+                if rank <= 2:
+                    return "High Performing - Top Rank"
+                else:
+                    return "High Performing - Improve Impression Share"
+            elif acr >= (baseline * 0.75):  # More than 75% of USP
+                return "Promising - Scale Impression Share"
+            else:
+                return "Below Baseline - Needs Optimization"
+        
+        final_df['Category'] = final_df.apply(categorize_search_term, axis=1)
+        
+        # Add recommendations
+        def get_recommendations(row):
+            category = row['Category']
+            rank = row['Impression Rank']
+            
+            if category == "High Performing - Top Rank":
+                return "✅ Maintain current strategy, monitor performance"
+            elif category == "High Performing - Improve Impression Share":
+                return "🚀 Increase bids to improve impression share rank"
+            elif category == "Promising - Scale Impression Share":
+                return "📈 Scale advertising efforts, check match types and targeting"
+            elif category == "Below Baseline - Needs Optimization":
+                return "⚠️ Review targeting strategy, consider negative keywords"
+            else:
+                return "📊 Collect more performance data"
+        
+        final_df['Recommendations'] = final_df.apply(get_recommendations, axis=1)
+    
+    # Restore ACR column to display format (with % signs) for final display
+    if 'ACR_display' in final_df.columns:
+        final_df['ACR %'] = final_df['ACR_display']
+        # Clean up temporary columns
+        final_df = final_df.drop(['ACR_display', 'ACR_numeric'], axis=1)
+    
+    # Add targeting information if available
+    targeting_info_df = None
+    if df_targeting_report_final is not None:
+        try:
+            # Filter targeting report for the campaigns
+            targeting_filtered = df_targeting_report_final[df_targeting_report_final['Campaign Name'].isin(campaigns)]
+            
+            # Create targeting summary by search term
+            targeting_summary = []
+            for search_term in final_df['Search Term']:
+                # Check if search term is targeted in different match types
+                exact_match = targeting_filtered[
+                    (targeting_filtered['Match Type'] == 'EXACT') & 
+                    (targeting_filtered['Keyword or product target'].str.lower() == search_term.lower())
+                ]
+                phrase_match = targeting_filtered[
+                    (targeting_filtered['Match Type'] == 'PHRASE') & 
+                    (targeting_filtered['Keyword or product target'].str.lower() == search_term.lower())
+                ]
+                broad_match = targeting_filtered[
+                    (targeting_filtered['Match Type'] == 'BROAD') & 
+                    (targeting_filtered['Keyword or product target'].str.lower() == search_term.lower())
+                ]
+                
+                targeting_summary.append({
+                    'Search Term': search_term,
+                    'EXACT Targeted': 'Yes' if len(exact_match) > 0 else 'No',
+                    'PHRASE Targeted': 'Yes' if len(phrase_match) > 0 else 'No',
+                    'BROAD Targeted': 'Yes' if len(broad_match) > 0 else 'No',
+                    'Total Targeting': len(exact_match) + len(phrase_match) + len(broad_match)
+                })
+            
+            targeting_info_df = pd.DataFrame(targeting_summary)
+            
+            # Merge targeting info with final_df
+            final_df = pd.merge(final_df, targeting_info_df, on='Search Term', how='left')
+            
+        except Exception as e:
+            # If targeting processing fails, continue without it
+            pass
+    
+    # Sort by orders (highest to lowest)
+    final_df = final_df.sort_values('Orders', ascending=False)
+    
+    return final_df, baseline_unit_session_percentage
+
 def process_search_term_analysis(df_ad_product, st_imp_df, selected_asin, df_top_search_term_final, df_targeting_report_final, df_business_report):
     """
     Process search term analysis for a selected ASIN
@@ -949,6 +1135,9 @@ def main():
                     analysis_tabs.append("📊 Product Analysis")
                 if st_imp_brand_df is not None:
                     analysis_tabs.append("🏷️ Brand Analysis")
+                # Add Impression Share Analysis tab
+                if st_imp_product_df is not None:
+                    analysis_tabs.append("🎯 Impression Share Analysis")
                 
                 if analysis_tabs:
                     analysis_tab_objects = st.tabs(analysis_tabs)
@@ -1106,6 +1295,185 @@ def main():
                             )
                         else:
                             st.warning("No brand search term data found.")
+                        
+                        tab_index += 1
+                    
+                    # Impression Share Analysis Tab
+                    if st_imp_product_df is not None:
+                        with analysis_tab_objects[tab_index]:
+                            st.subheader("🎯 Search Term Impression Share Analysis")
+                            st.markdown("**Advanced analysis focusing on impression share optimization opportunities**")
+                            
+                            # ASIN Selection for Impression Share Analysis
+                            st.subheader("📋 Analysis Configuration")
+                            unique_asins = sorted(df_ad_product['Advertised ASIN'].unique())
+                            selected_asin_imp = st.selectbox(
+                                "Select ASIN for Impression Share Analysis:",
+                                options=unique_asins,
+                                help="Choose an ASIN to analyze impression share opportunities",
+                                key="impression_share_asin_selector"
+                            )
+                            
+                            # Process impression share analysis
+                            with st.spinner("Processing impression share analysis..."):
+                                impression_share_df, baseline = process_impression_share_analysis(
+                                    df_ad_product, st_imp_product_df, selected_asin_imp, 
+                                    df_business_report, df_targeting_report_final
+                                )
+                            
+                            if impression_share_df is not None and len(impression_share_df) > 0:
+                                st.subheader(f"📊 Impression Share Analysis for ASIN: **{selected_asin_imp}**")
+                                
+                                # Display baseline information if available
+                                if baseline is not None:
+                                    st.info(f"📋 **Business Report Baseline:** Unit Session Percentage = {baseline}%")
+                                    st.caption("Search terms are categorized based on their ACR performance vs. this baseline")
+                                
+                                # Show summary metrics
+                                col1, col2, col3, col4 = st.columns(4)
+                                
+                                with col1:
+                                    st.metric("Total Search Terms", len(impression_share_df))
+                                with col2:
+                                    high_performing = len(impression_share_df[impression_share_df['Category'].str.contains('High Performing', na=False)])
+                                    st.metric("High Performing", high_performing)
+                                with col3:
+                                    promising = len(impression_share_df[impression_share_df['Category'].str.contains('Promising', na=False)])
+                                    st.metric("Promising Terms", promising)
+                                with col4:
+                                    total_orders = impression_share_df['Orders'].sum()
+                                    st.metric("Total Orders", f"{total_orders:,.0f}")
+                                
+                                # Category breakdown
+                                if 'Category' in impression_share_df.columns:
+                                    st.subheader("📈 Performance Categories")
+                                    category_counts = impression_share_df['Category'].value_counts()
+                                    
+                                    category_cols = st.columns(len(category_counts))
+                                    for idx, (category, count) in enumerate(category_counts.items()):
+                                        with category_cols[idx % len(category_cols)]:
+                                            if category == "High Performing - Top Rank":
+                                                st.success(f"✅ **{category}**: {count}")
+                                            elif category == "High Performing - Improve Impression Share":
+                                                st.warning(f"🚀 **{category}**: {count}")
+                                            elif category == "Promising - Scale Impression Share":
+                                                st.info(f"📈 **{category}**: {count}")
+                                            elif category == "Below Baseline - Needs Optimization":
+                                                st.error(f"⚠️ **{category}**: {count}")
+                                            else:
+                                                st.metric(category, count)
+                                
+                                # Filter options
+                                st.subheader("🔍 Filter Options")
+                                filter_col1, filter_col2 = st.columns(2)
+                                
+                                with filter_col1:
+                                    if 'Category' in impression_share_df.columns:
+                                        categories = ['All'] + list(impression_share_df['Category'].unique())
+                                        selected_category = st.selectbox("Filter by Category:", categories)
+                                    else:
+                                        selected_category = 'All'
+                                
+                                with filter_col2:
+                                    min_orders = st.number_input("Minimum Orders:", min_value=3, value=3, max_value=100)
+                                
+                                # Apply filters
+                                filtered_df = impression_share_df.copy()
+                                if selected_category != 'All' and 'Category' in filtered_df.columns:
+                                    filtered_df = filtered_df[filtered_df['Category'] == selected_category]
+                                filtered_df = filtered_df[filtered_df['Orders'] >= min_orders]
+                                
+                                st.subheader(f"📋 Search Terms Analysis ({len(filtered_df)} terms)")
+                                st.caption("**Filtering criteria:** ≥3 orders, sorted by orders (highest → lowest)")
+                                
+                                # Display the analysis table
+                                st.dataframe(
+                                    filtered_df,
+                                    use_container_width=True,
+                                    hide_index=True,
+                                    column_config={
+                                        "Impression Rank": st.column_config.NumberColumn(
+                                            "Impression Rank",
+                                            help="Lower rank = better impression share position",
+                                            format="%.1f"
+                                        ),
+                                        "Impression Share %": st.column_config.NumberColumn(
+                                            "Impression Share %",
+                                            help="Percentage of available impressions captured",
+                                            format="%.2f%%"
+                                        ),
+                                        "ACR %": st.column_config.NumberColumn(
+                                            "ACR %",
+                                            help="Ad Conversion Rate",
+                                            format="%.2f%%"
+                                        ),
+                                        "ACR vs Baseline": st.column_config.NumberColumn(
+                                            "ACR vs Baseline",
+                                            help="Difference from business report baseline",
+                                            format="%.2f"
+                                        ),
+                                        "Category": st.column_config.TextColumn(
+                                            "Performance Category",
+                                            help="Categorization based on ACR vs baseline performance"
+                                        ),
+                                        "Recommendations": st.column_config.TextColumn(
+                                            "Action Recommendations",
+                                            help="Suggested actions based on performance analysis"
+                                        )
+                                    }
+                                )
+                                
+                                # Action Items Section
+                                st.subheader("💡 Key Action Items")
+                                
+                                # High opportunity terms
+                                if 'Category' in impression_share_df.columns:
+                                    high_opportunity = impression_share_df[
+                                        impression_share_df['Category'] == "High Performing - Improve Impression Share"
+                                    ]
+                                    
+                                    if not high_opportunity.empty:
+                                        st.success("🚀 **High Opportunity Terms** (High ACR but poor impression rank):")
+                                        for _, row in high_opportunity.head(5).iterrows():
+                                            # Format ACR to 2 decimal places
+                                            acr_value = str(row['ACR %']).replace('%', '')
+                                            try:
+                                                acr_formatted = f"{float(acr_value):.2f}%"
+                                            except:
+                                                acr_formatted = row['ACR %']
+                                            st.write(f"• **{row['Search Term']}** - Rank: {row['Impression Rank']:.1f}, ACR: {acr_formatted} - {row['Recommendations']}")
+                                    
+                                    # Promising terms to scale
+                                    promising_terms = impression_share_df[
+                                        impression_share_df['Category'] == "Promising - Scale Impression Share"
+                                    ]
+                                    
+                                    if not promising_terms.empty:
+                                        st.info("📈 **Promising Terms to Scale** (75%+ of baseline performance):")
+                                        for _, row in promising_terms.head(5).iterrows():
+                                            # Format ACR to 2 decimal places
+                                            acr_value = str(row['ACR %']).replace('%', '')
+                                            try:
+                                                acr_formatted = f"{float(acr_value):.2f}%"
+                                            except:
+                                                acr_formatted = row['ACR %']
+                                            st.write(f"• **{row['Search Term']}** - ACR: {acr_formatted} vs Baseline: {baseline:.2f}% - {row['Recommendations']}")
+                                
+                                # Download button for impression share analysis
+                                csv_impression = filtered_df.to_csv(index=False)
+                                st.download_button(
+                                    label="📥 Download Impression Share Analysis as CSV",
+                                    data=csv_impression,
+                                    file_name=f"impression_share_analysis_{selected_asin_imp}.csv",
+                                    mime="text/csv",
+                                    key="download_impression_analysis"
+                                )
+                                
+                            else:
+                                if df_business_report is None:
+                                    st.warning("⚠️ Business Report is required for impression share analysis. Please upload a BusinessReport CSV file.")
+                                else:
+                                    st.warning("No search terms found with ≥3 orders for this ASIN.")
             else:
                 st.info("👆 Please upload files using the file uploader above, then click 'Process Detected Files' to begin analysis.")
         else:
