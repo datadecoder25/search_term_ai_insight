@@ -475,6 +475,8 @@ def process_impression_share_analysis(df_ad_product, st_imp_df, selected_asin, d
                     return "High Performing - Improve Impression Share"
             elif acr >= (baseline * 0.75):  # More than 75% of USP
                 return "Promising - Scale Impression Share"
+            elif acr < (baseline * 0.75):  # Scenario B: More than 25% below baseline
+                return "Gray Zone - Expensive to Scale"
             else:
                 return "Below Baseline - Needs Optimization"
         
@@ -491,8 +493,10 @@ def process_impression_share_analysis(df_ad_product, st_imp_df, selected_asin, d
                 return "🚀 Increase bids to improve impression share rank"
             elif category == "Promising - Scale Impression Share":
                 return "📈 Scale advertising efforts, check match types and targeting"
+            elif category == "Gray Zone - Expensive to Scale":
+                return "⚠️ Avoid increasing bids unless ranking strategy. Consider sponsored brand video ads if budget allows"
             elif category == "Below Baseline - Needs Optimization":
-                return "⚠️ Review targeting strategy, consider negative keywords"
+                return "❌ Review targeting strategy"
             else:
                 return "📊 Collect more performance data"
         
@@ -1341,8 +1345,8 @@ def main():
                                     promising = len(impression_share_df[impression_share_df['Category'].str.contains('Promising', na=False)])
                                     st.metric("Promising Terms", promising)
                                 with col4:
-                                    total_orders = impression_share_df['Orders'].sum()
-                                    st.metric("Total Orders", f"{total_orders:,.0f}")
+                                    gray_zone = len(impression_share_df[impression_share_df['Category'].str.contains('Gray Zone', na=False)])
+                                    st.metric("Gray Zone Terms", gray_zone)
                                 
                                 # Category breakdown
                                 if 'Category' in impression_share_df.columns:
@@ -1358,8 +1362,10 @@ def main():
                                                 st.warning(f"🚀 **{category}**: {count}")
                                             elif category == "Promising - Scale Impression Share":
                                                 st.info(f"📈 **{category}**: {count}")
+                                            elif category == "Gray Zone - Expensive to Scale":
+                                                st.warning(f"⚠️ **{category}**: {count}")
                                             elif category == "Below Baseline - Needs Optimization":
-                                                st.error(f"⚠️ **{category}**: {count}")
+                                                st.error(f"❌ **{category}**: {count}")
                                             else:
                                                 st.metric(category, count)
                                 
@@ -1426,38 +1432,82 @@ def main():
                                 # Action Items Section
                                 st.subheader("💡 Key Action Items")
                                 
-                                # High opportunity terms
+                                # High performing top rank terms - Already maximized
                                 if 'Category' in impression_share_df.columns:
-                                    high_opportunity = impression_share_df[
-                                        impression_share_df['Category'] == "High Performing - Improve Impression Share"
+                                    top_rank_terms = impression_share_df[
+                                        impression_share_df['Category'] == "High Performing - Top Rank"
                                     ]
                                     
-                                    if not high_opportunity.empty:
-                                        st.success("🚀 **High Opportunity Terms** (High ACR but poor impression rank):")
-                                        for _, row in high_opportunity.head(5).iterrows():
+                                    if not top_rank_terms.empty:
+                                        st.success("✅ **Top Performing Terms** (Already maximized performance):")
+                                        for _, row in top_rank_terms.head(5).iterrows():
                                             # Format ACR to 2 decimal places
                                             acr_value = str(row['ACR %']).replace('%', '')
                                             try:
                                                 acr_formatted = f"{float(acr_value):.2f}%"
                                             except:
                                                 acr_formatted = row['ACR %']
-                                            st.write(f"• **{row['Search Term']}** - Rank: {row['Impression Rank']:.1f}, ACR: {acr_formatted} - {row['Recommendations']}")
-                                    
-                                    # Promising terms to scale
-                                    promising_terms = impression_share_df[
-                                        impression_share_df['Category'] == "Promising - Scale Impression Share"
-                                    ]
-                                    
-                                    if not promising_terms.empty:
-                                        st.info("📈 **Promising Terms to Scale** (75%+ of baseline performance):")
-                                        for _, row in promising_terms.head(5).iterrows():
-                                            # Format ACR to 2 decimal places
-                                            acr_value = str(row['ACR %']).replace('%', '')
-                                            try:
-                                                acr_formatted = f"{float(acr_value):.2f}%"
-                                            except:
-                                                acr_formatted = row['ACR %']
-                                            st.write(f"• **{row['Search Term']}** - ACR: {acr_formatted} vs Baseline: {baseline:.2f}% - {row['Recommendations']}")
+                                            
+                                            # Show match types if available
+                                            match_types = []
+                                            if 'EXACT Targeted' in row and row['EXACT Targeted'] == 'Yes':
+                                                match_types.append('EXACT')
+                                            if 'PHRASE Targeted' in row and row['PHRASE Targeted'] == 'Yes':
+                                                match_types.append('PHRASE')
+                                            if 'BROAD Targeted' in row and row['BROAD Targeted'] == 'Yes':
+                                                match_types.append('BROAD')
+                                            
+                                            match_info = f" | Match Types: {', '.join(match_types)}" if match_types else " | Match Types: Not detected"
+                                            
+                                            st.write(f"• **{row['Search Term']}** - Rank: {row['Impression Rank']:.1f}, ACR: {acr_formatted} vs Baseline: {baseline:.2f}% - Performance maximized{match_info}")
+                                
+                                # High opportunity terms
+                                high_opportunity = impression_share_df[
+                                    impression_share_df['Category'] == "High Performing - Improve Impression Share"
+                                ]
+                                
+                                if not high_opportunity.empty:
+                                    st.success("🚀 **High Opportunity Terms** (High ACR but poor impression rank):")
+                                    for _, row in high_opportunity.head(5).iterrows():
+                                        # Format ACR to 2 decimal places
+                                        acr_value = str(row['ACR %']).replace('%', '')
+                                        try:
+                                            acr_formatted = f"{float(acr_value):.2f}%"
+                                        except:
+                                            acr_formatted = row['ACR %']
+                                        st.write(f"• **{row['Search Term']}** - Rank: {row['Impression Rank']:.1f}, ACR: {acr_formatted} - {row['Recommendations']}")
+                                
+                                # Promising terms to scale
+                                promising_terms = impression_share_df[
+                                    impression_share_df['Category'] == "Promising - Scale Impression Share"
+                                ]
+                                
+                                if not promising_terms.empty:
+                                    st.info("📈 **Promising Terms to Scale** (75%+ of baseline performance):")
+                                    for _, row in promising_terms.head(5).iterrows():
+                                        # Format ACR to 2 decimal places
+                                        acr_value = str(row['ACR %']).replace('%', '')
+                                        try:
+                                            acr_formatted = f"{float(acr_value):.2f}%"
+                                        except:
+                                            acr_formatted = row['ACR %']
+                                        st.write(f"• **{row['Search Term']}** - ACR: {acr_formatted} vs Baseline: {baseline:.2f}% - {row['Recommendations']}")
+                                
+                                # Gray Zone terms - Scenario B
+                                gray_zone_terms = impression_share_df[
+                                    impression_share_df['Category'] == "Gray Zone - Expensive to Scale"
+                                ]
+                                
+                                if not gray_zone_terms.empty:
+                                    st.warning("⚠️ **Gray Zone Terms** (25%+ below baseline - expensive to scale):")
+                                    for _, row in gray_zone_terms.head(5).iterrows():
+                                        # Format ACR to 2 decimal places
+                                        acr_value = str(row['ACR %']).replace('%', '')
+                                        try:
+                                            acr_formatted = f"{float(acr_value):.2f}%"
+                                        except:
+                                            acr_formatted = row['ACR %']
+                                        st.write(f"• **{row['Search Term']}** - ACR: {acr_formatted} vs Baseline: {baseline:.2f}% - {row['Recommendations']}")
                                 
                                 # Download button for impression share analysis
                                 csv_impression = filtered_df.to_csv(index=False)
