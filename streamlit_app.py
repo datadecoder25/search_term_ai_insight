@@ -508,46 +508,39 @@ def process_impression_share_analysis(df_ad_product, st_imp_df, selected_asin, d
         # Clean up temporary columns
         final_df = final_df.drop(['ACR_display', 'ACR_numeric'], axis=1)
     
-    # Add targeting information if available
-    targeting_info_df = None
+    # Process targeting report data for match type columns (same as process_search_term_analysis)
+    targeting_data = {'EXACT': set(), 'PHRASE': set(), 'BROAD': set()}
+    
     if df_targeting_report_final is not None:
         try:
-            # Filter targeting report for the campaigns
-            targeting_filtered = df_targeting_report_final[df_targeting_report_final['Campaign Name'].isin(campaigns)]
+            filtered_targeting_report_df = df_targeting_report_final[df_targeting_report_final['Campaign Name'].isin(campaigns)].reset_index(drop=True)
             
-            # Create targeting summary by search term
-            targeting_summary = []
-            for search_term in final_df['Search Term']:
-                # Check if search term is targeted in different match types
-                exact_match = targeting_filtered[
-                    (targeting_filtered['Match Type'] == 'EXACT') & 
-                    (targeting_filtered['Keyword or product target'].str.lower() == search_term.lower())
-                ]
-                phrase_match = targeting_filtered[
-                    (targeting_filtered['Match Type'] == 'PHRASE') & 
-                    (targeting_filtered['Keyword or product target'].str.lower() == search_term.lower())
-                ]
-                broad_match = targeting_filtered[
-                    (targeting_filtered['Match Type'] == 'BROAD') & 
-                    (targeting_filtered['Keyword or product target'].str.lower() == search_term.lower())
-                ]
-                
-                targeting_summary.append({
-                    'Search Term': search_term,
-                    'EXACT Targeted': 'Yes' if len(exact_match) > 0 else 'No',
-                    'PHRASE Targeted': 'Yes' if len(phrase_match) > 0 else 'No',
-                    'BROAD Targeted': 'Yes' if len(broad_match) > 0 else 'No',
-                    'Total Targeting': len(exact_match) + len(phrase_match) + len(broad_match)
-                })
-            
-            targeting_info_df = pd.DataFrame(targeting_summary)
-            
-            # Merge targeting info with final_df
-            final_df = pd.merge(final_df, targeting_info_df, on='Search Term', how='left')
-            
+            # Create sets of targeting terms for each match type
+            for match_type in ['EXACT', 'PHRASE', 'BROAD']:
+                match_data = filtered_targeting_report_df[filtered_targeting_report_df['Match Type'] == match_type]
+                targeting_data[match_type] = set(match_data['Targeting'].dropna().unique())
         except Exception as e:
-            # If targeting processing fails, continue without it
+            # If there's an error processing targeting data, continue with empty sets
             pass
+    
+    # Add match type columns (same format as process_search_term_analysis)
+    if df_targeting_report_final is not None:
+        try:
+            # Add columns for each match type
+            final_df['EXACT_Match'] = final_df['Search Term'].apply(
+                lambda x: 'Targeted' if x in targeting_data['EXACT'] else 'Not Targeted'
+            )
+            final_df['PHRASE_Match'] = final_df['Search Term'].apply(
+                lambda x: 'Targeted' if x in targeting_data['PHRASE'] else 'Not Targeted'
+            )
+            final_df['BROAD_Match'] = final_df['Search Term'].apply(
+                lambda x: 'Targeted' if x in targeting_data['BROAD'] else 'Not Targeted'
+            )
+        except Exception as e:
+            # If there's an error, add empty columns
+            final_df['EXACT_Match'] = 'Not Targeted'
+            final_df['PHRASE_Match'] = 'Not Targeted'
+            final_df['BROAD_Match'] = 'Not Targeted'
     
     # Sort by orders (highest to lowest)
     final_df = final_df.sort_values('Orders', ascending=False)
@@ -1450,11 +1443,11 @@ def main():
                                             
                                             # Show match types if available
                                             match_types = []
-                                            if 'EXACT Targeted' in row and row['EXACT Targeted'] == 'Yes':
+                                            if 'EXACT_Match' in row and row['EXACT_Match'] == 'Targeted':
                                                 match_types.append('EXACT')
-                                            if 'PHRASE Targeted' in row and row['PHRASE Targeted'] == 'Yes':
+                                            if 'PHRASE_Match' in row and row['PHRASE_Match'] == 'Targeted':
                                                 match_types.append('PHRASE')
-                                            if 'BROAD Targeted' in row and row['BROAD Targeted'] == 'Yes':
+                                            if 'BROAD_Match' in row and row['BROAD_Match'] == 'Targeted':
                                                 match_types.append('BROAD')
                                             
                                             match_info = f" | Match Types: {', '.join(match_types)}" if match_types else " | Match Types: Not detected"
