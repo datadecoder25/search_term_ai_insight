@@ -364,7 +364,7 @@ def load_sponsored_product_data_from_uploads(excel_file, csv_product_file, csv_b
         st.error(f"Error loading files: {str(e)}")
         return None, None, None, None, None, None
 
-def process_impression_share_analysis(df_ad_product, st_imp_df, selected_asin, df_business_report, df_targeting_report_final, df_top_search_term_final):
+def process_impression_share_analysis(df_ad_product, st_imp_df, selected_asin, df_business_report, df_targeting_report_final, df_top_search_term_final, st_imp_top_search_term_df):
     """
     Process impression share analysis for sponsored product search terms with business report benchmarking
     """
@@ -555,6 +555,58 @@ def process_impression_share_analysis(df_ad_product, st_imp_df, selected_asin, d
             # Fill NaN values with 0 for the top search term columns
             final_df['top_3_click_share'] = final_df['top_3_click_share'].fillna(0)
             final_df['top_3_conversion_share'] = final_df['top_3_conversion_share'].fillna(0)
+            
+            # Calculate competitive intensity if we have access to individual product shares
+            # We need to merge with the original top search terms data to get individual shares
+            try:
+                # Get individual product shares for competitive intensity calculation
+                individual_shares_df = st_imp_top_search_term_df[['Search Term', 
+                                                                'Top Clicked Product #1: Click Share',
+                                                                'Top Clicked Product #2: Click Share', 
+                                                                'Top Clicked Product #3: Click Share',
+                                                                'Top Clicked Product #1: Conversion Share',
+                                                                'Top Clicked Product #2: Conversion Share',
+                                                                'Top Clicked Product #3: Conversion Share']].copy()
+                
+                # Merge individual shares
+                final_df = pd.merge(final_df, individual_shares_df, on='Search Term', how='left')
+                
+                # Calculate competitive intensity
+                def calculate_competitive_intensity(row):
+                    # Click competitive intensity
+                    remaining_click_share = 100 - row['top_3_click_share']
+                    third_click_share = row['Top Clicked Product #3: Click Share']
+                    click_intensity = remaining_click_share / third_click_share if third_click_share > 0 else 0
+                    
+                    # Conversion competitive intensity  
+                    remaining_conversion_share = 100 - row['top_3_conversion_share']
+                    third_conversion_share = row['Top Clicked Product #3: Conversion Share']
+                    conversion_intensity = remaining_conversion_share / third_conversion_share if third_conversion_share > 0 else 0
+                    
+                    return pd.Series({
+                        'Remaining Click Share': remaining_click_share,
+                        'Remaining Conversion Share': remaining_conversion_share,
+                        'Click Competitive Intensity': round(click_intensity, 2),
+                        'Conversion Competitive Intensity': round(conversion_intensity, 2)
+                    })
+                
+                # Apply competitive intensity calculation
+                competitive_metrics = final_df.apply(calculate_competitive_intensity, axis=1)
+                final_df = pd.concat([final_df, competitive_metrics], axis=1)
+                
+                # Clean up individual share columns (keep them for reference but move to end)
+                individual_cols = ['Top Clicked Product #1: Click Share', 'Top Clicked Product #2: Click Share', 
+                                 'Top Clicked Product #3: Click Share', 'Top Clicked Product #1: Conversion Share',
+                                 'Top Clicked Product #2: Conversion Share', 'Top Clicked Product #3: Conversion Share']
+                
+                # Reorder columns to put competitive intensity metrics after top_3 shares
+                main_cols = [col for col in final_df.columns if col not in individual_cols]
+                final_df = final_df[main_cols + individual_cols]
+                
+            except Exception as e:
+                # If competitive intensity calculation fails, continue without it
+                pass
+                
         except Exception as e:
             # If there's an error merging top search terms data, continue without it
             pass
@@ -1332,7 +1384,7 @@ def main():
                             with st.spinner("Processing impression share analysis..."):
                                 impression_share_df, baseline = process_impression_share_analysis(
                                     df_ad_product, st_imp_product_df, selected_asin_imp, 
-                                    df_business_report, df_targeting_report_final, df_top_search_term_final
+                                    df_business_report, df_targeting_report_final, df_top_search_term_final, st_imp_top_search_term_df
                                 )
                             
                             if impression_share_df is not None and len(impression_share_df) > 0:
@@ -1344,7 +1396,7 @@ def main():
                                     st.caption("Search terms are categorized based on their ACR performance vs. this baseline")
                                 
                                 # Show summary metrics
-                                col1, col2, col3, col4 = st.columns(4)
+                                col1, col2, col3, col4, col5 = st.columns(5)
                                 
                                 with col1:
                                     st.metric("Total Search Terms", len(impression_share_df))
@@ -1357,6 +1409,14 @@ def main():
                                 with col4:
                                     gray_zone = len(impression_share_df[impression_share_df['Category'].str.contains('Gray Zone', na=False)])
                                     st.metric("Gray Zone Terms", gray_zone)
+                                with col5:
+                                    # Average competitive intensity for clicks (if available)
+                                    if 'Click Competitive Intensity' in impression_share_df.columns:
+                                        avg_click_intensity = impression_share_df['Click Competitive Intensity'].mean()
+                                        st.metric("Avg Click Intensity", f"{avg_click_intensity:.1f}")
+                                    else:
+                                        total_orders = impression_share_df['Orders'].sum()
+                                        st.metric("Total Orders", f"{total_orders:,.0f}")
                                 
                                 # Category breakdown
                                 if 'Category' in impression_share_df.columns:
@@ -1444,6 +1504,26 @@ def main():
                                         "top_3_conversion_share": st.column_config.NumberColumn(
                                             "Top 3 Conversion Share", 
                                             help="Combined conversion share of top 3 clicked products for this search term",
+                                            format="%.2f"
+                                        ),
+                                        "Remaining Click Share": st.column_config.NumberColumn(
+                                            "Remaining Click Share",
+                                            help="Market share not captured by top 3 products (100 - top_3_click_share)",
+                                            format="%.2f"
+                                        ),
+                                        "Remaining Conversion Share": st.column_config.NumberColumn(
+                                            "Remaining Conversion Share",
+                                            help="Conversion share not captured by top 3 products (100 - top_3_conversion_share)",
+                                            format="%.2f"
+                                        ),
+                                        "Click Competitive Intensity": st.column_config.NumberColumn(
+                                            "Click Competitive Intensity",
+                                            help="Minimum # of competing products winning clicks (Remaining / 3rd product share)",
+                                            format="%.2f"
+                                        ),
+                                        "Conversion Competitive Intensity": st.column_config.NumberColumn(
+                                            "Conversion Competitive Intensity",
+                                            help="Minimum # of competing products winning conversions (Remaining / 3rd product share)",
                                             format="%.2f"
                                         )
                                     }
