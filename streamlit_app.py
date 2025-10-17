@@ -782,7 +782,7 @@ def process_search_term_analysis(df_ad_product, st_imp_df, selected_asin, df_top
     
     return final_df
 
-def process_brand_search_term_analysis(st_imp_df, df_top_search_term_final):
+def process_brand_search_term_analysis(st_imp_df, df_top_search_term_final, st_imp_top_search_term_df):
     """
     Process brand search term analysis for all campaigns (no ASIN filtering)
     Handles both 7 Day and 14 Day column formats
@@ -906,6 +906,58 @@ def process_brand_search_term_analysis(st_imp_df, df_top_search_term_final):
     if df_top_search_term_final is not None:
         try:
             final_df = pd.merge(final_df, df_top_search_term_final, on='Search Term', how='left')
+            
+            # Calculate competitive intensity if we have access to individual product shares
+            if st_imp_top_search_term_df is not None:
+                try:
+                    # Get individual product shares for competitive intensity calculation
+                    individual_shares_df = st_imp_top_search_term_df[['Search Term', 
+                                                                    'Top Clicked Product #1: Click Share',
+                                                                    'Top Clicked Product #2: Click Share', 
+                                                                    'Top Clicked Product #3: Click Share',
+                                                                    'Top Clicked Product #1: Conversion Share',
+                                                                    'Top Clicked Product #2: Conversion Share',
+                                                                    'Top Clicked Product #3: Conversion Share']].copy()
+                    
+                    # Merge individual shares
+                    final_df = pd.merge(final_df, individual_shares_df, on='Search Term', how='left')
+                    
+                    # Calculate competitive intensity
+                    def calculate_competitive_intensity(row):
+                        # Click competitive intensity
+                        remaining_click_share = 100 - row['top_3_click_share'] if pd.notna(row['top_3_click_share']) else 0
+                        third_click_share = row['Top Clicked Product #3: Click Share'] if pd.notna(row['Top Clicked Product #3: Click Share']) else 0
+                        click_intensity = remaining_click_share / third_click_share if third_click_share > 0 else 0
+                        
+                        # Conversion competitive intensity  
+                        remaining_conversion_share = 100 - row['top_3_conversion_share'] if pd.notna(row['top_3_conversion_share']) else 0
+                        third_conversion_share = row['Top Clicked Product #3: Conversion Share'] if pd.notna(row['Top Clicked Product #3: Conversion Share']) else 0
+                        conversion_intensity = remaining_conversion_share / third_conversion_share if third_conversion_share > 0 else 0
+                        
+                        return pd.Series({
+                            'Remaining Click Share': remaining_click_share,
+                            'Remaining Conversion Share': remaining_conversion_share,
+                            'Click Competitive Intensity': round(click_intensity, 2),
+                            'Conversion Competitive Intensity': round(conversion_intensity, 2)
+                        })
+                    
+                    # Apply competitive intensity calculation
+                    competitive_metrics = final_df.apply(calculate_competitive_intensity, axis=1)
+                    final_df = pd.concat([final_df, competitive_metrics], axis=1)
+                    
+                    # Clean up individual share columns (keep them for reference but move to end)
+                    individual_cols = ['Top Clicked Product #1: Click Share', 'Top Clicked Product #2: Click Share', 
+                                     'Top Clicked Product #3: Click Share', 'Top Clicked Product #1: Conversion Share',
+                                     'Top Clicked Product #2: Conversion Share', 'Top Clicked Product #3: Conversion Share']
+                    
+                    # Reorder columns to put competitive intensity metrics after top_3 shares
+                    main_cols = [col for col in final_df.columns if col not in individual_cols]
+                    final_df = final_df[main_cols + individual_cols]
+                    
+                except Exception as e:
+                    # If competitive intensity calculation fails, continue without it
+                    pass
+                    
         except:
             pass
     
@@ -1292,8 +1344,8 @@ def main():
                             
                             # Process and display search term analysis for brand
                             with st.spinner("Processing brand search term analysis..."):
-                                brand_search_term_df = process_brand_search_term_analysis(st_imp_brand_df, df_top_search_term_final)
-                                
+                                brand_search_term_df = process_brand_search_term_analysis(st_imp_brand_df, df_top_search_term_final, st_imp_top_search_term_df)
+                            
                             if brand_search_term_df is not None and len(brand_search_term_df) > 0:
                                 # Display key metrics for selected search terms
                                 three_farmers_data = brand_search_term_df[brand_search_term_df['Search Term'] == 'three farmers']
@@ -1335,6 +1387,36 @@ def main():
                                             "ACR (%)",
                                             format="%.2f%%"
                                         ),
+                                        "top_3_click_share": st.column_config.NumberColumn(
+                                            "Top 3 Click Share",
+                                            help="Combined click share of top 3 clicked products for this search term",
+                                            format="%.2f"
+                                        ),
+                                        "top_3_conversion_share": st.column_config.NumberColumn(
+                                            "Top 3 Conversion Share", 
+                                            help="Combined conversion share of top 3 clicked products for this search term",
+                                            format="%.2f"
+                                        ),
+                                        "Remaining Click Share": st.column_config.NumberColumn(
+                                            "Remaining Click Share",
+                                            help="Market share not captured by top 3 products (100 - top_3_click_share)",
+                                            format="%.2f"
+                                        ),
+                                        "Remaining Conversion Share": st.column_config.NumberColumn(
+                                            "Remaining Conversion Share",
+                                            help="Conversion share not captured by top 3 products (100 - top_3_conversion_share)",
+                                            format="%.2f"
+                                        ),
+                                        "Click Competitive Intensity": st.column_config.NumberColumn(
+                                            "Click Competitive Intensity",
+                                            help="Minimum # of competing products winning clicks (Remaining / 3rd product share)",
+                                            format="%.2f"
+                                        ),
+                                        "Conversion Competitive Intensity": st.column_config.NumberColumn(
+                                            "Conversion Competitive Intensity",
+                                            help="Minimum # of competing products winning conversions (Remaining / 3rd product share)",
+                                            format="%.2f"
+                                        )
                                         # "EXACT_Match": st.column_config.TextColumn(
                                         #     "EXACT Match",
                                         #     help="Shows if this search term is targeted with EXACT match type"
