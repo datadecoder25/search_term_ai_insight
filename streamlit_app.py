@@ -364,7 +364,7 @@ def load_sponsored_product_data_from_uploads(excel_file, csv_product_file, csv_b
         st.error(f"Error loading files: {str(e)}")
         return None, None, None, None, None, None
 
-def process_impression_share_analysis(df_ad_product, st_imp_df, selected_asin, df_business_report, df_targeting_report_final):
+def process_impression_share_analysis(df_ad_product, st_imp_df, selected_asin, df_business_report, df_targeting_report_final, df_top_search_term_final):
     """
     Process impression share analysis for sponsored product search terms with business report benchmarking
     """
@@ -541,6 +541,23 @@ def process_impression_share_analysis(df_ad_product, st_imp_df, selected_asin, d
             final_df['EXACT_Match'] = 'Not Targeted'
             final_df['PHRASE_Match'] = 'Not Targeted'
             final_df['BROAD_Match'] = 'Not Targeted'
+    
+    # Add Top Search Term data if available (same as process_search_term_analysis)
+    if df_top_search_term_final is not None:
+        try:
+            final_df = pd.merge(
+                final_df, 
+                df_top_search_term_final[['Search Term', 'top_3_click_share', 'top_3_conversion_share']], 
+                on='Search Term', 
+                how='left'
+            )
+            
+            # Fill NaN values with 0 for the top search term columns
+            final_df['top_3_click_share'] = final_df['top_3_click_share'].fillna(0)
+            final_df['top_3_conversion_share'] = final_df['top_3_conversion_share'].fillna(0)
+        except Exception as e:
+            # If there's an error merging top search terms data, continue without it
+            pass
     
     # Sort by orders (highest to lowest)
     final_df = final_df.sort_values('Orders', ascending=False)
@@ -1315,7 +1332,7 @@ def main():
                             with st.spinner("Processing impression share analysis..."):
                                 impression_share_df, baseline = process_impression_share_analysis(
                                     df_ad_product, st_imp_product_df, selected_asin_imp, 
-                                    df_business_report, df_targeting_report_final
+                                    df_business_report, df_targeting_report_final, df_top_search_term_final
                                 )
                             
                             if impression_share_df is not None and len(impression_share_df) > 0:
@@ -1418,6 +1435,16 @@ def main():
                                         "Recommendations": st.column_config.TextColumn(
                                             "Action Recommendations",
                                             help="Suggested actions based on performance analysis"
+                                        ),
+                                        "top_3_click_share": st.column_config.NumberColumn(
+                                            "Top 3 Click Share",
+                                            help="Combined click share of top 3 clicked products for this search term",
+                                            format="%.2f"
+                                        ),
+                                        "top_3_conversion_share": st.column_config.NumberColumn(
+                                            "Top 3 Conversion Share", 
+                                            help="Combined conversion share of top 3 clicked products for this search term",
+                                            format="%.2f"
                                         )
                                     }
                                 )
