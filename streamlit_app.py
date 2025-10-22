@@ -364,9 +364,10 @@ def load_sponsored_product_data_from_uploads(excel_file, csv_product_file, csv_b
         st.error(f"Error loading files: {str(e)}")
         return None, None, None, None, None, None
 
-def process_impression_share_analysis(df_ad_product, st_imp_df, selected_asin, df_business_report, df_targeting_report_final, df_top_search_term_final, st_imp_top_search_term_df):
+def process_impression_share_analysis(df_ad_product, st_imp_df, selected_asin, df_business_report, df_targeting_report_final, df_top_search_term_final, st_imp_top_search_term_df, st_imp_brand_df=None):
     """
     Process impression share analysis for sponsored product search terms with business report benchmarking
+    Includes both SP (Sponsored Product) and SB (Sponsored Brand) match type targeting
     """
     # Get campaigns for the selected ASIN
     campaigns = df_ad_product[df_ad_product['Advertised ASIN'] == selected_asin]['Campaign Name'].unique()
@@ -523,7 +524,25 @@ def process_impression_share_analysis(df_ad_product, st_imp_df, selected_asin, d
             # If there's an error processing targeting data, continue with empty sets
             pass
     
-    # Add match type columns (same format as process_search_term_analysis)
+    # Process brand targeting data for SB match types
+    brand_targeting_data = {'EXACT': set(), 'PHRASE': set(), 'BROAD': set()}
+    
+    if st_imp_brand_df is not None:
+        try:
+            # Extract match type information from brand search term data
+            # The brand data typically has 'Customer Search Term' and 'Match Type' columns
+            brand_df_copy = st_imp_brand_df.copy()
+            
+            # Create sets of brand targeting terms for each match type
+            for match_type in ['EXACT', 'PHRASE', 'BROAD']:
+                if 'Match Type' in brand_df_copy.columns and 'Customer Search Term' in brand_df_copy.columns:
+                    match_data = brand_df_copy[brand_df_copy['Match Type'] == match_type]
+                    brand_targeting_data[match_type] = set(match_data['Customer Search Term'].dropna().unique())
+        except Exception as e:
+            # If there's an error processing brand targeting data, continue with empty sets
+            pass
+    
+    # Add match type columns for SP (Sponsored Product)
     if df_targeting_report_final is not None:
         try:
             # Add columns for each match type
@@ -541,6 +560,25 @@ def process_impression_share_analysis(df_ad_product, st_imp_df, selected_asin, d
             final_df['SP_EXACT_Match'] = 'Not Targeted'
             final_df['SP_PHRASE_Match'] = 'Not Targeted'
             final_df['SP_BROAD_Match'] = 'Not Targeted'
+    
+    # Add match type columns for SB (Sponsored Brand)
+    if st_imp_brand_df is not None:
+        try:
+            # Add columns for each brand match type
+            final_df['SB_EXACT_Match'] = final_df['Search Term'].apply(
+                lambda x: 'Targeted' if x in brand_targeting_data['EXACT'] else 'Not Targeted'
+            )
+            final_df['SB_PHRASE_Match'] = final_df['Search Term'].apply(
+                lambda x: 'Targeted' if x in brand_targeting_data['PHRASE'] else 'Not Targeted'
+            )
+            final_df['SB_BROAD_Match'] = final_df['Search Term'].apply(
+                lambda x: 'Targeted' if x in brand_targeting_data['BROAD'] else 'Not Targeted'
+            )
+        except Exception as e:
+            # If there's an error, add empty columns
+            final_df['SB_EXACT_Match'] = 'Not Targeted'
+            final_df['SB_PHRASE_Match'] = 'Not Targeted'
+            final_df['SB_BROAD_Match'] = 'Not Targeted'
     
     # Add Top Search Term data if available (same as process_search_term_analysis)
     if df_top_search_term_final is not None:
@@ -1466,7 +1504,7 @@ def main():
                             with st.spinner("Processing impression share analysis..."):
                                 impression_share_df, baseline = process_impression_share_analysis(
                                     df_ad_product, st_imp_product_df, selected_asin_imp, 
-                                    df_business_report, df_targeting_report_final, df_top_search_term_final, st_imp_top_search_term_df
+                                    df_business_report, df_targeting_report_final, df_top_search_term_final, st_imp_top_search_term_df, st_imp_brand_df
                                 )
                             
                             if impression_share_df is not None and len(impression_share_df) > 0:
@@ -1614,6 +1652,74 @@ def main():
                                 # Action Items Section
                                 st.subheader("💡 Key Action Items")
                                 
+                                # Helper function to extract match type information
+                                def get_match_type_info(row):
+                                    """Extract SP and SB match type information from a row"""
+                                    sp_targeted = []
+                                    sp_non_targeted = []
+                                    sb_targeted = []
+                                    sb_non_targeted = []
+                                    
+                                    # SP Match Types
+                                    if 'SP_EXACT_Match' in row:
+                                        if row['SP_EXACT_Match'] == 'Targeted':
+                                            sp_targeted.append('EXACT')
+                                        else:
+                                            sp_non_targeted.append('EXACT')
+                                    
+                                    if 'SP_PHRASE_Match' in row:
+                                        if row['SP_PHRASE_Match'] == 'Targeted':
+                                            sp_targeted.append('PHRASE')
+                                        else:
+                                            sp_non_targeted.append('PHRASE')
+                                    
+                                    if 'SP_BROAD_Match' in row:
+                                        if row['SP_BROAD_Match'] == 'Targeted':
+                                            sp_targeted.append('BROAD')
+                                        else:
+                                            sp_non_targeted.append('BROAD')
+                                    
+                                    # SB Match Types
+                                    if 'SB_EXACT_Match' in row:
+                                        if row['SB_EXACT_Match'] == 'Targeted':
+                                            sb_targeted.append('EXACT')
+                                        else:
+                                            sb_non_targeted.append('EXACT')
+                                    
+                                    if 'SB_PHRASE_Match' in row:
+                                        if row['SB_PHRASE_Match'] == 'Targeted':
+                                            sb_targeted.append('PHRASE')
+                                        else:
+                                            sb_non_targeted.append('PHRASE')
+                                    
+                                    if 'SB_BROAD_Match' in row:
+                                        if row['SB_BROAD_Match'] == 'Targeted':
+                                            sb_targeted.append('BROAD')
+                                        else:
+                                            sb_non_targeted.append('BROAD')
+                                    
+                                    # Build match info string
+                                    match_info = ""
+                                    
+                                    # SP Info
+                                    if sp_targeted or sp_non_targeted:
+                                        if sp_targeted:
+                                            match_info += f" | SP Targeted: {', '.join(sp_targeted)}"
+                                        if sp_non_targeted:
+                                            match_info += f" | ⚠️ SP Increase bid: {', '.join(sp_non_targeted)}"
+                                    
+                                    # SB Info
+                                    if sb_targeted or sb_non_targeted:
+                                        if sb_targeted:
+                                            match_info += f" | SB Targeted: {', '.join(sb_targeted)}"
+                                        if sb_non_targeted:
+                                            match_info += f" | ⚠️ SB Increase bid: {', '.join(sb_non_targeted)}"
+                                    
+                                    if not match_info:
+                                        match_info = " | Match Types: Not detected"
+                                    
+                                    return match_info
+                                
                                 # High performing top rank terms - Already maximized
                                 if 'Category' in impression_share_df.columns:
                                     top_rank_terms = impression_share_df[
@@ -1630,35 +1736,7 @@ def main():
                                             except:
                                                 acr_formatted = row['ACR %']
                                             
-                                            # Show match types if available and provide recommendations
-                                            targeted_match_types = []
-                                            non_targeted_match_types = []
-                                            
-                                            if 'SP_EXACT_Match' in row:
-                                                if row['SP_EXACT_Match'] == 'Targeted':
-                                                    targeted_match_types.append('EXACT')
-                                                else:
-                                                    non_targeted_match_types.append('EXACT')
-                                            
-                                            if 'SP_PHRASE_Match' in row:
-                                                if row['SP_PHRASE_Match'] == 'Targeted':
-                                                    targeted_match_types.append('PHRASE')
-                                                else:
-                                                    non_targeted_match_types.append('PHRASE')
-                                            
-                                            if 'SP_BROAD_Match' in row:
-                                                if row['SP_BROAD_Match'] == 'Targeted':
-                                                    targeted_match_types.append('BROAD')
-                                                else:
-                                                    non_targeted_match_types.append('BROAD')
-                                            
-                                            match_info = ""
-                                            if targeted_match_types:
-                                                match_info += f" | Targeted: {', '.join(targeted_match_types)}"
-                                            if non_targeted_match_types:
-                                                match_info += f" | ⚠️ Increase bid in: {', '.join(non_targeted_match_types)}"
-                                            if not targeted_match_types and not non_targeted_match_types:
-                                                match_info = " | Match Types: Not detected"
+                                            match_info = get_match_type_info(row)
                                             
                                             st.write(f"• **{row['Search Term']}** - Rank: {row['Impression Rank']:.1f}, Imp Share: {row['Impression Share %']:.2f}%, ACR: {acr_formatted} vs Baseline: {baseline:.2f}% - Performance maximized{match_info}")
                                 
@@ -1677,33 +1755,7 @@ def main():
                                         except:
                                             acr_formatted = row['ACR %']
                                         
-                                        # Show match types and bidding recommendations
-                                        targeted_match_types = []
-                                        non_targeted_match_types = []
-                                        
-                                        if 'SP_EXACT_Match' in row:
-                                            if row['SP_EXACT_Match'] == 'Targeted':
-                                                targeted_match_types.append('EXACT')
-                                            else:
-                                                non_targeted_match_types.append('EXACT')
-                                        
-                                        if 'SP_PHRASE_Match' in row:
-                                            if row['SP_PHRASE_Match'] == 'Targeted':
-                                                targeted_match_types.append('PHRASE')
-                                            else:
-                                                non_targeted_match_types.append('PHRASE')
-                                        
-                                        if 'SP_BROAD_Match' in row:
-                                            if row['SP_BROAD_Match'] == 'Targeted':
-                                                targeted_match_types.append('BROAD')
-                                            else:
-                                                non_targeted_match_types.append('BROAD')
-                                        
-                                        match_info = ""
-                                        if targeted_match_types:
-                                            match_info += f" | Targeted: {', '.join(targeted_match_types)}"
-                                        if non_targeted_match_types:
-                                            match_info += f" | ⚠️ Increase bid in: {', '.join(non_targeted_match_types)}"
+                                        match_info = get_match_type_info(row)
                                         
                                         st.write(f"• **{row['Search Term']}** - Rank: {row['Impression Rank']:.1f}, Imp Share: {row['Impression Share %']:.2f}%, ACR: {acr_formatted} - {row['Recommendations']}{match_info}")
                                 
@@ -1722,33 +1774,7 @@ def main():
                                         except:
                                             acr_formatted = row['ACR %']
                                         
-                                        # Show match types and bidding recommendations
-                                        targeted_match_types = []
-                                        non_targeted_match_types = []
-                                        
-                                        if 'SP_EXACT_Match' in row:
-                                            if row['SP_EXACT_Match'] == 'Targeted':
-                                                targeted_match_types.append('EXACT')
-                                            else:
-                                                non_targeted_match_types.append('EXACT')
-                                        
-                                        if 'SP_PHRASE_Match' in row:
-                                            if row['SP_PHRASE_Match'] == 'Targeted':
-                                                targeted_match_types.append('PHRASE')
-                                            else:
-                                                non_targeted_match_types.append('PHRASE')
-                                        
-                                        if 'SP_BROAD_Match' in row:
-                                            if row['SP_BROAD_Match'] == 'Targeted':
-                                                targeted_match_types.append('BROAD')
-                                            else:
-                                                non_targeted_match_types.append('BROAD')
-                                        
-                                        match_info = ""
-                                        if targeted_match_types:
-                                            match_info += f" | Targeted: {', '.join(targeted_match_types)}"
-                                        if non_targeted_match_types:
-                                            match_info += f" | ⚠️ Increase bid in: {', '.join(non_targeted_match_types)}"
+                                        match_info = get_match_type_info(row)
                                         
                                         st.write(f"• **{row['Search Term']}** - Rank: {row['Impression Rank']:.1f}, Imp Share: {row['Impression Share %']:.2f}%, ACR: {acr_formatted} vs Baseline: {baseline:.2f}% - {row['Recommendations']}{match_info}")
                                 
@@ -1767,33 +1793,7 @@ def main():
                                         except:
                                             acr_formatted = row['ACR %']
                                         
-                                        # Show match types and bidding recommendations
-                                        targeted_match_types = []
-                                        non_targeted_match_types = []
-                                        
-                                        if 'SP_EXACT_Match' in row:
-                                            if row['SP_EXACT_Match'] == 'Targeted':
-                                                targeted_match_types.append('EXACT')
-                                            else:
-                                                non_targeted_match_types.append('EXACT')
-                                        
-                                        if 'SP_PHRASE_Match' in row:
-                                            if row['SP_PHRASE_Match'] == 'Targeted':
-                                                targeted_match_types.append('PHRASE')
-                                            else:
-                                                non_targeted_match_types.append('PHRASE')
-                                        
-                                        if 'SP_BROAD_Match' in row:
-                                            if row['SP_BROAD_Match'] == 'Targeted':
-                                                targeted_match_types.append('BROAD')
-                                            else:
-                                                non_targeted_match_types.append('BROAD')
-                                        
-                                        match_info = ""
-                                        if targeted_match_types:
-                                            match_info += f" | Targeted: {', '.join(targeted_match_types)}"
-                                        if non_targeted_match_types:
-                                            match_info += f" | ⚠️ Increase bid in: {', '.join(non_targeted_match_types)}"
+                                        match_info = get_match_type_info(row)
                                         
                                         st.write(f"• **{row['Search Term']}** - Rank: {row['Impression Rank']:.1f}, Imp Share: {row['Impression Share %']:.2f}%, ACR: {acr_formatted} vs Baseline: {baseline:.2f}% - {row['Recommendations']}{match_info}")
                                 
