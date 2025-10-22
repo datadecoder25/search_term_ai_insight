@@ -1557,6 +1557,40 @@ def main():
                 for i, (plot_tab, (plot_name, fig)) in enumerate(zip(plot_tabs, plots)):
                     with plot_tab:
                         st.plotly_chart(fig, use_container_width=True)
+                
+                # Display the raw data table
+                st.subheader("📋 Search Term Data Table")
+                
+                st.dataframe(
+                    filtered_df,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "Date": st.column_config.DateColumn("Date", format="YYYY-MM-DD"),
+                        "Search Query Score": st.column_config.NumberColumn("Score", format="%.2f"),
+                        "Search Query Volume": st.column_config.NumberColumn("Volume", format="%d"),
+                        "Total Purchase Count": st.column_config.NumberColumn("Purchases", format="%d"),
+                        "Brand Impressions Share": st.column_config.NumberColumn("Impression Share %", format="%.2f"),
+                        "Click Rate": st.column_config.NumberColumn("Click Rate %", format="%.2f"),
+                        "Brand Click Share": st.column_config.NumberColumn("Click Share %", format="%.2f"),
+                        "Cart Add Rate": st.column_config.NumberColumn("Cart Add Rate %", format="%.2f"),
+                        "Brand Cart Adds Share": st.column_config.NumberColumn("Cart Add Share %", format="%.2f"),
+                        "Purchase Rate": st.column_config.NumberColumn("Purchase Rate %", format="%.2f"),
+                        "Brand Purchase Share": st.column_config.NumberColumn("Purchase Share %", format="%.2f")
+                    }
+                )
+                
+                # Download button for the data
+                csv_data = filtered_df.to_csv(index=False)
+                st.download_button(
+                    label="📥 Download Data as CSV",
+                    data=csv_data,
+                    file_name=f"search_term_data_{selected_query.replace(' ', '_')}.csv",
+                    mime="text/csv",
+                    key="download_search_term_data"
+                )
+                
+                st.caption(f"📊 Showing {len(filtered_df)} data points for '{selected_query}'")
         else:
             st.info("👆 Please upload CSV files and click 'Process Uploaded Files' to begin analysis.")
     
