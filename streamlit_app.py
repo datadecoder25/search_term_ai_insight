@@ -6,6 +6,7 @@ import io
 import numpy as np
 import os
 import glob
+from scipy import stats
 
 # Set page configuration
 st.set_page_config(
@@ -153,6 +154,274 @@ def fill_missing_dates(data: pd.DataFrame, date_column: str, freq: str) -> pd.Da
     filled_df.sort_values(by=['Search Query', 'Date'], inplace=True)
 
     return filled_df
+
+def analyze_search_term_trends(filtered_df):
+    """
+    Analyze trends for a search term over time with correlations and insights
+    Returns a dictionary with trend analysis
+    """
+    # Ensure Date is datetime and sort
+    df = filtered_df.copy()
+    df['Date'] = pd.to_datetime(df['Date'])
+    df = df.sort_values('Date')
+    
+    # Remove rows where volume is 0 (gaps in data)
+    df_valid = df[df['Search Query Volume'] > 0].copy()
+    
+    if len(df_valid) < 2:
+        return None
+    
+    # Create numeric index for regression
+    df_valid['time_index'] = range(len(df_valid))
+    
+    def calculate_trend(series, time_index):
+        """Calculate trend direction and slope"""
+        if len(series) < 2 or series.isna().all():
+            return {'direction': 'insufficient_data', 'slope': 0, 'change_pct': 0, 'r_squared': 0}
+        
+        # Remove NaN values
+        valid_mask = ~(series.isna() | time_index.isna())
+        clean_series = series[valid_mask]
+        clean_time = time_index[valid_mask]
+        
+        if len(clean_series) < 2:
+            return {'direction': 'insufficient_data', 'slope': 0, 'change_pct': 0, 'r_squared': 0}
+        
+        # Linear regression
+        slope, intercept, r_value, p_value, std_err = stats.linregress(clean_time, clean_series)
+        
+        # Calculate percentage change
+        first_val = clean_series.iloc[0]
+        last_val = clean_series.iloc[-1]
+        change_pct = ((last_val - first_val) / first_val * 100) if first_val != 0 else 0
+        
+        # Determine direction
+        if abs(slope) < 0.01 and abs(change_pct) < 5:
+            direction = 'flat'
+        elif slope > 0:
+            direction = 'up'
+        elif slope < 0:
+            direction = 'down'
+        else:
+            direction = 'flat'
+        
+        # Check for fluctuation (high variance relative to mean)
+        cv = clean_series.std() / clean_series.mean() if clean_series.mean() != 0 else 0
+        if cv > 0.3:  # Coefficient of variation > 30%
+            direction = 'fluctuating'
+        
+        return {
+            'direction': direction,
+            'slope': slope,
+            'change_pct': change_pct,
+            'r_squared': r_value**2,
+            'p_value': p_value
+        }
+    
+    # Analyze trends for each metric
+    analysis = {
+        'search_volume': calculate_trend(df_valid['Search Query Volume'], df_valid['time_index']),
+        'impression_share': calculate_trend(df_valid['Brand Impressions Share'], df_valid['time_index']),
+        'click_share': calculate_trend(df_valid['Brand Click Share'], df_valid['time_index']),
+        'purchase_share': calculate_trend(df_valid['Brand Purchase Share'], df_valid['time_index']),
+        'total_purchases': calculate_trend(df_valid['Total Purchase Count'], df_valid['time_index'])
+    }
+    
+    # Calculate correlations
+    correlations = {}
+    try:
+        # Volume vs Impression Share
+        if len(df_valid) >= 3:
+            correlations['volume_vs_impression'] = df_valid[['Search Query Volume', 'Brand Impressions Share']].corr().iloc[0, 1]
+            correlations['impression_vs_click'] = df_valid[['Brand Impressions Share', 'Brand Click Share']].corr().iloc[0, 1]
+            correlations['click_vs_purchase'] = df_valid[['Brand Click Share', 'Brand Purchase Share']].corr().iloc[0, 1]
+            correlations['volume_vs_purchases'] = df_valid[['Search Query Volume', 'Total Purchase Count']].corr().iloc[0, 1]
+    except:
+        pass
+    
+    analysis['correlations'] = correlations
+    
+    # Month-over-month absolute purchases
+    mom_purchases = []
+    if len(df_valid) >= 2:
+        for i in range(1, len(df_valid)):
+            prev_purchases = df_valid.iloc[i-1]['Total Purchase Count']
+            curr_purchases = df_valid.iloc[i]['Total Purchase Count']
+            change = curr_purchases - prev_purchases
+            change_pct = (change / prev_purchases * 100) if prev_purchases != 0 else 0
+            mom_purchases.append({
+                'period': f"{df_valid.iloc[i-1]['Date'].strftime('%Y-%m-%d')} → {df_valid.iloc[i]['Date'].strftime('%Y-%m-%d')}",
+                'prev': prev_purchases,
+                'curr': curr_purchases,
+                'change': change,
+                'change_pct': change_pct
+            })
+    
+    analysis['mom_purchases'] = mom_purchases
+    
+    # Generate insights
+    insights = []
+    
+    # Search Volume insights
+    vol_trend = analysis['search_volume']
+    if vol_trend['direction'] == 'up':
+        insights.append(f"📈 **Search Volume Trending Up**: {vol_trend['change_pct']:.1f}% increase over period")
+    elif vol_trend['direction'] == 'down':
+        insights.append(f"📉 **Search Volume Declining**: {vol_trend['change_pct']:.1f}% decrease over period")
+    elif vol_trend['direction'] == 'fluctuating':
+        insights.append(f"📊 **Search Volume Fluctuating**: High variability in search demand")
+    else:
+        insights.append(f"➡️ **Search Volume Stable**: Consistent search demand")
+    
+    # Impression Share insights
+    imp_trend = analysis['impression_share']
+    if imp_trend['direction'] == 'up':
+        insights.append(f"✅ **Impression Share Growing**: {imp_trend['change_pct']:.1f}% increase - good visibility")
+    elif imp_trend['direction'] == 'down':
+        insights.append(f"⚠️ **Impression Share Declining**: {imp_trend['change_pct']:.1f}% decrease - losing visibility")
+    
+    # Click Share insights
+    click_trend = analysis['click_share']
+    if click_trend['direction'] == 'up':
+        insights.append(f"👆 **Click Share Improving**: {click_trend['change_pct']:.1f}% increase")
+    elif click_trend['direction'] == 'down':
+        insights.append(f"👇 **Click Share Declining**: {click_trend['change_pct']:.1f}% decrease")
+    
+    # Purchase Share insights
+    purch_trend = analysis['purchase_share']
+    if purch_trend['direction'] == 'up':
+        insights.append(f"💰 **Purchase Share Growing**: {purch_trend['change_pct']:.1f}% increase - winning conversions")
+    elif purch_trend['direction'] == 'down':
+        insights.append(f"⚠️ **Purchase Share Declining**: {purch_trend['change_pct']:.1f}% decrease")
+    
+    # Correlation insights
+    if correlations:
+        # Comprehensive combination analysis of Impression, Click, and Purchase trends
+        imp_dir = imp_trend['direction']
+        click_dir = click_trend['direction']
+        purch_dir = purch_trend['direction']
+        
+        # === IDEAL SCENARIOS ===
+        
+        # All three growing - Perfect execution
+        if imp_dir == 'up' and click_dir == 'up' and purch_dir == 'up':
+            insights.append(f"🎯 **Excellent Performance**: All metrics trending up - impression, click & purchase share growing. Continue current strategy!")
+        
+        # Efficiency gains - Doing more with same/less impressions
+        elif imp_dir in ['flat', 'down'] and click_dir == 'up' and purch_dir == 'up':
+            insights.append(f"✨ **High Efficiency Gains**: Click & purchase share growing despite {'stable' if imp_dir == 'flat' else 'declining'} impressions - excellent ad relevance and conversion optimization!")
+        
+        # Improving conversion funnel
+        elif imp_dir == 'flat' and click_dir == 'flat' and purch_dir == 'up':
+            insights.append(f"💎 **Conversion Rate Improvement**: Purchase share growing with stable impressions & clicks - better at closing sales!")
+        
+        # === WARNING SCENARIOS ===
+        
+        # Impression up but not converting to clicks/purchases
+        elif imp_dir == 'up' and click_dir in ['flat', 'down'] and purch_dir in ['flat', 'down']:
+            insights.append(f"⚠️ **Low CTR Alert**: Impression share up but clicks {'flat' if click_dir == 'flat' else 'declining'} - check ad copy, images, pricing, and relevance. May be showing for less relevant searches.")
+        
+        # Clicks up but not converting
+        elif imp_dir == 'up' and click_dir == 'up' and purch_dir in ['flat', 'down']:
+            insights.append(f"⚠️ **Conversion Problem**: Getting impressions & clicks but purchase share {'not growing' if purch_dir == 'flat' else 'declining'} - check product page, pricing, reviews, A+ content, and fulfillment options.")
+        
+        # Stable impressions but losing clicks and purchases
+        elif imp_dir == 'flat' and click_dir == 'down' and purch_dir == 'down':
+            insights.append(f"⚠️ **Declining Engagement**: Visibility stable but click & purchase share declining - competitors may have better offers, or product/price competitiveness declining.")
+        
+        # Only impressions growing
+        elif imp_dir == 'up' and click_dir == 'flat' and purch_dir == 'flat':
+            insights.append(f"📊 **Mixed Visibility**: Impression share growing but click & purchase share flat - gaining visibility but not engagement. Review ad quality and relevance.")
+        
+        # Losing impressions while clicks/purchases stable
+        elif imp_dir == 'down' and click_dir in ['flat'] and purch_dir in ['flat']:
+            insights.append(f"🎯 **Efficiency Maintained**: Impression share declining but maintaining click & purchase rates - may need to increase bids to regain visibility, but conversion quality is good.")
+        
+        # === DECLINING SCENARIOS ===
+        
+        # Everything declining
+        elif imp_dir == 'down' and click_dir == 'down' and purch_dir == 'down':
+            insights.append(f"🚨 **Full Decline Alert**: All metrics declining - immediate action needed. Check: 1) Bid competitiveness, 2) Budget constraints, 3) Competitor activity, 4) Product reviews/ratings, 5) Seasonality.")
+        
+        # Impressions down, but conversion holding
+        elif imp_dir == 'down' and click_dir == 'down' and purch_dir in ['flat', 'up']:
+            insights.append(f"💡 **Quality over Quantity**: Impression & click share down but purchase share {'stable' if purch_dir == 'flat' else 'growing'} - higher conversion rate but lower volume. Consider increasing bids to scale winning traffic.")
+        
+        # Clicks declining faster than impressions
+        elif imp_dir in ['flat', 'up'] and click_dir == 'down' and purch_dir == 'down':
+            insights.append(f"⚠️ **CTR Deterioration**: Click & purchase share declining despite {'stable' if imp_dir == 'flat' else 'growing'} impressions - ad fatigue or competitive pressure. Refresh creative and check pricing.")
+        
+        # === MIXED/COMPLEX SCENARIOS ===
+        
+        # Impressions up, clicks down, purchases up (unusual but possible)
+        elif imp_dir == 'up' and click_dir == 'down' and purch_dir == 'up':
+            insights.append(f"🔍 **Interesting Pattern**: Impression up, clicks down, but purchases up - getting higher quality/converting clicks despite lower CTR. May indicate better search term targeting or improved product appeal.")
+        
+        # Stable impressions, clicks up, purchases down
+        elif imp_dir == 'flat' and click_dir == 'up' and purch_dir == 'down':
+            insights.append(f"⚠️ **Conversion Drop**: Click share growing but purchase share declining - traffic quality may be declining or product page has issues. Review: product content, pricing competitiveness, inventory status.")
+        
+        # Clicks stable but diverging impression and purchase
+        elif imp_dir == 'up' and click_dir == 'flat' and purch_dir == 'down':
+            insights.append(f"🔍 **Funnel Breakdown**: Impressions up, clicks stable, purchases down - either CTR is declining (getting irrelevant impressions) or conversion rate dropping. Audit search term quality.")
+        
+        elif imp_dir == 'down' and click_dir == 'flat' and purch_dir == 'up':
+            insights.append(f"✅ **Optimization Success**: Fewer impressions but better click quality leading to higher purchase share - efficient targeting. Can scale with increased budget.")
+        
+        # Fluctuating scenarios
+        if 'fluctuating' in [imp_dir, click_dir, purch_dir]:
+            fluctuating_metrics = []
+            if imp_dir == 'fluctuating':
+                fluctuating_metrics.append('impression share')
+            if click_dir == 'fluctuating':
+                fluctuating_metrics.append('click share')
+            if purch_dir == 'fluctuating':
+                fluctuating_metrics.append('purchase share')
+            
+            insights.append(f"📊 **High Variability**: {', '.join(fluctuating_metrics)} showing high fluctuation - may indicate seasonality, promotional cycles, or inconsistent campaign management. Consider stabilizing bids and budgets.")
+        
+        # Volume up with stable share
+        if vol_trend['direction'] == 'up' and imp_trend['direction'] in ['flat']:
+            insights.append(f"📈 **Market Growth Opportunity**: Search volume increasing - absolute impressions growing even with stable share %. Consider increasing bids to capture more of growing market.")
+        
+        # Volume down scenarios
+        elif vol_trend['direction'] == 'down':
+            if imp_trend['direction'] == 'up':
+                insights.append(f"🎯 **Market Share Gain**: Gaining impression share despite declining search volume - winning against competitors in shrinking market.")
+            elif imp_trend['direction'] == 'down':
+                insights.append(f"⚠️ **Market Decline**: Both search volume and impression share declining - market may be shrinking or seasonal. Evaluate long-term viability of this search term.")
+        
+        # Strong correlation between volume and purchases
+        if correlations.get('volume_vs_purchases', 0) > 0.7:
+            insights.append(f"✅ **Strong Volume-Purchase Correlation**: {correlations['volume_vs_purchases']:.2f} - effectively capturing search demand growth. Performance scales with market size.")
+        elif 0.3 <= correlations.get('volume_vs_purchases', 0) <= 0.7:
+            insights.append(f"📊 **Moderate Volume-Purchase Correlation**: {correlations['volume_vs_purchases']:.2f} - capturing some search demand but room for optimization.")
+        elif correlations.get('volume_vs_purchases', 0) < 0.3:
+            insights.append(f"⚠️ **Weak Volume-Purchase Correlation**: {correlations['volume_vs_purchases']:.2f} - not converting search demand efficiently. Major optimization opportunity.")
+        
+        # Impression-Click correlation
+        if correlations.get('impression_vs_click', 0) > 0.7:
+            insights.append(f"✅ **Strong Impression-Click Correlation**: {correlations['impression_vs_click']:.2f} - visibility translating well to engagement.")
+        elif correlations.get('impression_vs_click', 0) < 0.3:
+            insights.append(f"⚠️ **Weak Impression-Click Correlation**: {correlations['impression_vs_click']:.2f} - getting impressions but poor engagement. Review ad creative and positioning.")
+        
+        # Click-Purchase correlation
+        if correlations.get('click_vs_purchase', 0) > 0.7:
+            insights.append(f"✅ **Strong Click-Purchase Correlation**: {correlations['click_vs_purchase']:.2f} - clicks converting well to sales.")
+        elif correlations.get('click_vs_purchase', 0) < 0.3:
+            insights.append(f"⚠️ **Weak Click-Purchase Correlation**: {correlations['click_vs_purchase']:.2f} - getting clicks but poor conversion. Optimize product page, pricing, and fulfillment.")
+    
+    # Total purchases trend
+    total_purch_trend = analysis['total_purchases']
+    if total_purch_trend['direction'] == 'up':
+        insights.append(f"💵 **Absolute Purchases Growing**: {total_purch_trend['change_pct']:.1f}% increase in actual sales")
+    elif total_purch_trend['direction'] == 'down':
+        insights.append(f"⚠️ **Absolute Purchases Declining**: {total_purch_trend['change_pct']:.1f}% decrease in actual sales")
+    
+    analysis['insights'] = insights
+    analysis['data_points'] = len(df_valid)
+    
+    return analysis
 
 def create_interactive_plots(filtered_df):
     """
@@ -1051,27 +1320,39 @@ def main():
             )
             freq = "ME" if freq_option == "Monthly" else "W"
             
-            # Clear cache button
-            if st.button("🔄 Clear Cache", type="secondary"):
+            # Clear data button
+            if st.button("🗑️ Clear Loaded Data", type="secondary"):
+                # Clear session state for tab1
+                for key in list(st.session_state.keys()):
+                    if key.startswith('tab1_'):
+                        del st.session_state[key]
                 st.cache_data.clear()
-                st.success("Cache cleared!")
+                st.success("Data cleared!")
+                st.rerun()
             
             # Load data button
             load_data_tab1 = st.button("📊 Process Uploaded Files", type="primary", disabled=not uploaded_files)
         
-        # Load data from uploaded files
-        combined_df = None
-        
+        # Load data from uploaded files and store in session state
         if uploaded_files and load_data_tab1:
             with st.spinner("Processing uploaded CSV files..."):
                 combined_df = load_and_combine_uploaded_csvs(uploaded_files)
+                
+                if combined_df is not None:
+                    # Process data
+                    with st.spinner("Processing data and filling missing dates..."):
+                        full_df = fill_missing_dates(combined_df, 'Reporting Date', freq).fillna(0)
+                    
+                    # Store in session state
+                    st.session_state.tab1_full_df = full_df
+                    st.session_state.tab1_freq_option = freq_option
+                    st.session_state.tab1_data_loaded = True
         
-        if combined_df is None:
-            st.info("👆 Please upload CSV files and click 'Process Uploaded Files' to begin analysis.")
-        else:
-            # Process data
-            with st.spinner("Processing data and filling missing dates..."):
-                full_df = fill_missing_dates(combined_df, 'Reporting Date', freq).fillna(0)
+        # Check if data exists in session state
+        if hasattr(st.session_state, 'tab1_data_loaded') and st.session_state.tab1_data_loaded:
+            # Retrieve data from session state
+            full_df = st.session_state.tab1_full_df
+            stored_freq_option = st.session_state.tab1_freq_option
             
             # Data summary in columns
             st.subheader("📈 Data Summary")
@@ -1130,6 +1411,140 @@ def main():
                 st.header(f"🎯 Analytics Dashboard: **{selected_query}**")
                 st.caption(f"Analysis Frequency: {freq_option}")
                 
+                # Perform Trend Analysis
+                st.subheader("📈 Trend Analysis & Insights")
+                
+                with st.spinner("Analyzing trends..."):
+                    trend_analysis = analyze_search_term_trends(filtered_df)
+                
+                if trend_analysis:
+                    # Display Key Insights
+                    st.markdown("### 🔍 Key Insights")
+                    for insight in trend_analysis['insights']:
+                        st.markdown(insight)
+                    
+                    st.markdown("---")
+                    
+                    # Trend Summary
+                    col1, col2, col3, col4, col5 = st.columns(5)
+                    
+                    with col1:
+                        vol_trend = trend_analysis['search_volume']
+                        trend_emoji = {"up": "📈", "down": "📉", "flat": "➡️", "fluctuating": "📊"}.get(vol_trend['direction'], "❓")
+                        st.metric(
+                            "Search Volume Trend",
+                            f"{trend_emoji} {vol_trend['direction'].title()}",
+                            f"{vol_trend['change_pct']:.1f}%"
+                        )
+                    
+                    with col2:
+                        imp_trend = trend_analysis['impression_share']
+                        trend_emoji = {"up": "📈", "down": "📉", "flat": "➡️", "fluctuating": "📊"}.get(imp_trend['direction'], "❓")
+                        st.metric(
+                            "Impression Share",
+                            f"{trend_emoji} {imp_trend['direction'].title()}",
+                            f"{imp_trend['change_pct']:.1f}%"
+                        )
+                    
+                    with col3:
+                        click_trend = trend_analysis['click_share']
+                        trend_emoji = {"up": "📈", "down": "📉", "flat": "➡️", "fluctuating": "📊"}.get(click_trend['direction'], "❓")
+                        st.metric(
+                            "Click Share",
+                            f"{trend_emoji} {click_trend['direction'].title()}",
+                            f"{click_trend['change_pct']:.1f}%"
+                        )
+                    
+                    with col4:
+                        purch_trend = trend_analysis['purchase_share']
+                        trend_emoji = {"up": "📈", "down": "📉", "flat": "➡️", "fluctuating": "📊"}.get(purch_trend['direction'], "❓")
+                        st.metric(
+                            "Purchase Share",
+                            f"{trend_emoji} {purch_trend['direction'].title()}",
+                            f"{purch_trend['change_pct']:.1f}%"
+                        )
+                    
+                    with col5:
+                        total_purch_trend = trend_analysis['total_purchases']
+                        trend_emoji = {"up": "📈", "down": "📉", "flat": "➡️", "fluctuating": "📊"}.get(total_purch_trend['direction'], "❓")
+                        st.metric(
+                            "Total Purchases",
+                            f"{trend_emoji} {total_purch_trend['direction'].title()}",
+                            f"{total_purch_trend['change_pct']:.1f}%"
+                        )
+                    
+                    # Correlations Section
+                    if trend_analysis['correlations']:
+                        st.markdown("### 🔗 Metric Correlations")
+                        corr_col1, corr_col2, corr_col3, corr_col4 = st.columns(4)
+                        
+                        with corr_col1:
+                            corr_val = trend_analysis['correlations'].get('volume_vs_impression', 0)
+                            st.metric(
+                                "Volume ↔ Impression",
+                                f"{corr_val:.2f}",
+                                help="Correlation between search volume and impression share"
+                            )
+                        
+                        with corr_col2:
+                            corr_val = trend_analysis['correlations'].get('impression_vs_click', 0)
+                            st.metric(
+                                "Impression ↔ Click",
+                                f"{corr_val:.2f}",
+                                help="Correlation between impression share and click share"
+                            )
+                        
+                        with corr_col3:
+                            corr_val = trend_analysis['correlations'].get('click_vs_purchase', 0)
+                            st.metric(
+                                "Click ↔ Purchase",
+                                f"{corr_val:.2f}",
+                                help="Correlation between click share and purchase share"
+                            )
+                        
+                        with corr_col4:
+                            corr_val = trend_analysis['correlations'].get('volume_vs_purchases', 0)
+                            st.metric(
+                                "Volume ↔ Purchases",
+                                f"{corr_val:.2f}",
+                                help="Correlation between search volume and total purchases"
+                            )
+                        
+                        st.caption("📊 Correlation values range from -1 to +1. Values > 0.7 indicate strong positive correlation, < 0.3 indicate weak correlation.")
+                    
+                    # Period-over-Period Purchases
+                    if trend_analysis['mom_purchases']:
+                        st.markdown("### 💰 Period-over-Period Purchase Analysis")
+                        
+                        # Create a dataframe for better display
+                        mom_df = pd.DataFrame(trend_analysis['mom_purchases'])
+                        mom_df['Prev Purchases'] = mom_df['prev'].astype(int)
+                        mom_df['Current Purchases'] = mom_df['curr'].astype(int)
+                        mom_df['Change (#)'] = mom_df['change'].astype(int)
+                        mom_df['Change (%)'] = mom_df['change_pct'].apply(lambda x: f"{x:.1f}%")
+                        mom_df['Period'] = mom_df['period']
+                        
+                        display_mom_df = mom_df[['Period', 'Prev Purchases', 'Current Purchases', 'Change (#)', 'Change (%)']]
+                        
+                        st.dataframe(
+                            display_mom_df,
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config={
+                                "Period": st.column_config.TextColumn("Period", width="medium"),
+                                "Prev Purchases": st.column_config.NumberColumn("Previous", format="%d"),
+                                "Current Purchases": st.column_config.NumberColumn("Current", format="%d"),
+                                "Change (#)": st.column_config.NumberColumn("Change", format="%d"),
+                                "Change (%)": st.column_config.TextColumn("Change %")
+                            }
+                        )
+                        
+                        st.caption(f"📈 Analyzing absolute purchase changes across {len(trend_analysis['mom_purchases'])} periods with {trend_analysis['data_points']} data points")
+                    
+                    st.markdown("---")
+                else:
+                    st.warning("⚠️ Insufficient data for trend analysis. Need at least 2 data points with non-zero search volume.")
+                
                 # Create and display plots
                 st.subheader("📊 Interactive Visualizations")
                 
@@ -1142,6 +1557,8 @@ def main():
                 for i, (plot_tab, (plot_name, fig)) in enumerate(zip(plot_tabs, plots)):
                     with plot_tab:
                         st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("👆 Please upload CSV files and click 'Process Uploaded Files' to begin analysis.")
     
     with main_tab2:
         st.header("🎯 Sponsored Product Analysis")
