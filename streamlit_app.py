@@ -633,10 +633,13 @@ def load_sponsored_product_data_from_uploads(excel_file, csv_product_file, csv_b
         st.error(f"Error loading files: {str(e)}")
         return None, None, None, None, None, None
 
-def process_impression_share_analysis(df_ad_product, st_imp_df, selected_asin, df_business_report, df_targeting_report_final, df_top_search_term_final, st_imp_top_search_term_df, st_imp_brand_df=None):
+def process_impression_share_analysis(df_ad_product, st_imp_df, selected_asin, df_business_report, df_targeting_report_final, df_top_search_term_final, st_imp_top_search_term_df, st_imp_brand_df=None, sqp_df=None):
     """
     Process impression share analysis for sponsored product search terms with business report benchmarking
     Includes both SP (Sponsored Product) and SB (Sponsored Brand) match type targeting
+    
+    Parameters:
+    - sqp_df: Optional DataFrame with Search Query Performance data for trend analysis (from Tab 1)
     """
     # Get campaigns for the selected ASIN
     campaigns = df_ad_product[df_ad_product['Advertised ASIN'] == selected_asin]['Campaign Name'].unique()
@@ -918,6 +921,96 @@ def process_impression_share_analysis(df_ad_product, st_imp_df, selected_asin, d
         except Exception as e:
             # If there's an error merging top search terms data, continue without it
             pass
+    
+    # Add trend analysis from Search Query Performance data (Tab 1)
+    if sqp_df is not None and len(sqp_df) > 0:
+        try:
+            # Check which date column exists
+            date_col = 'Date' if 'Date' in sqp_df.columns else 'Reporting Date'
+            
+            # Check for required columns and map them if needed
+            required_cols = {
+                'Search Query': 'Search Query',
+                'Search Query Volume': 'Search Query Volume',
+                'Impressions: ASIN Share %': 'Brand Impressions Share' if 'Brand Impressions Share' in sqp_df.columns else 'Impressions: ASIN Share %',
+                'Clicks: ASIN Share %': 'Brand Click Share' if 'Brand Click Share' in sqp_df.columns else 'Clicks: ASIN Share %',
+                'Purchases: ASIN Share %': 'Brand Purchase Share' if 'Brand Purchase Share' in sqp_df.columns else 'Purchases: ASIN Share %'
+            }
+            
+            # Verify all columns exist
+            missing_cols = []
+            for orig_col, actual_col in required_cols.items():
+                if actual_col not in sqp_df.columns:
+                    missing_cols.append(f"{orig_col} (looking for {actual_col})")
+            
+            if missing_cols:
+                st.warning(f"⚠️ Cannot add trends - missing columns: {', '.join(missing_cols)}")
+                st.info(f"Available columns: {', '.join(sqp_df.columns.tolist()[:10])}...")
+            else:
+                # Perform aggregation on SQP data to get trend metrics for each search term
+                # Group by Search Query and calculate trend metrics
+                sqp_aggregated = sqp_df.groupby('Search Query').agg({
+                    required_cols['Search Query Volume']: ['first', 'last', lambda x: ((x.iloc[-1] - x.iloc[0]) / x.iloc[0] * 100) if len(x) >= 2 and x.iloc[0] != 0 else 0],
+                    required_cols['Impressions: ASIN Share %']: ['first', 'last', lambda x: ((x.iloc[-1] - x.iloc[0]) / x.iloc[0] * 100) if len(x) >= 2 and x.iloc[0] != 0 else 0],
+                    required_cols['Clicks: ASIN Share %']: ['first', 'last', lambda x: ((x.iloc[-1] - x.iloc[0]) / x.iloc[0] * 100) if len(x) >= 2 and x.iloc[0] != 0 else 0],
+                    required_cols['Purchases: ASIN Share %']: ['first', 'last', lambda x: ((x.iloc[-1] - x.iloc[0]) / x.iloc[0] * 100) if len(x) >= 2 and x.iloc[0] != 0 else 0],
+                    date_col: 'count'
+                }).reset_index()
+                
+                # Flatten column names
+                sqp_aggregated.columns = [
+                    'Search Query', 
+                    'Vol_First', 'Vol_Last', 'Vol_Change_Pct',
+                    'Imp_First', 'Imp_Last', 'Imp_Change_Pct',
+                    'Click_First', 'Click_Last', 'Click_Change_Pct',
+                    'Purch_First', 'Purch_Last', 'Purch_Change_Pct',
+                    'Data_Points'
+                ]
+                
+                # Function to format trend
+                def format_trend(change_pct):
+                    if abs(change_pct) < 5:
+                        return f"→ {change_pct:.1f}%"
+                    elif change_pct > 0:
+                        return f"↑ {change_pct:.1f}%"
+                    else:
+                        return f"↓ {change_pct:.1f}%"
+                
+                # Add formatted trend columns
+                sqp_aggregated['Vol Trend'] = sqp_aggregated['Vol_Change_Pct'].apply(format_trend)
+                sqp_aggregated['Imp Share Trend'] = sqp_aggregated['Imp_Change_Pct'].apply(format_trend)
+                sqp_aggregated['Click Share Trend'] = sqp_aggregated['Click_Change_Pct'].apply(format_trend)
+                sqp_aggregated['Purch Share Trend'] = sqp_aggregated['Purch_Change_Pct'].apply(format_trend)
+                
+                # Select only the columns we need for the join
+                trend_cols = sqp_aggregated[['Search Query', 'Vol Trend', 'Imp Share Trend', 'Click Share Trend', 'Purch Share Trend', 'Data_Points']]
+                
+                # Left join with final_df on Search Term = Search Query
+                final_df = pd.merge(
+                    final_df,
+                    trend_cols,
+                    left_on='Search Term',
+                    right_on='Search Query',
+                    how='left'
+                )
+                
+                # Drop the duplicate Search Query column if it exists
+                if 'Search Query' in final_df.columns:
+                    final_df = final_df.drop(columns=['Search Query'])
+                
+                # Fill NaN values in trend columns with 'N/A'
+                for col in ['Vol Trend', 'Imp Share Trend', 'Click Share Trend', 'Purch Share Trend']:
+                    if col in final_df.columns:
+                        final_df[col] = final_df[col].fillna('N/A')
+                
+                if 'Data_Points' in final_df.columns:
+                    final_df['Data_Points'] = final_df['Data_Points'].fillna(0).astype(int)
+                
+                st.success(f"✅ Added trend analysis for {len(trend_cols)} search terms from Tab 1 data")
+            
+        except Exception as e:
+            # If trend analysis fails, continue without it
+            st.warning(f"⚠️ Could not add trend analysis: {str(e)}")
     
     # Sort by orders (highest to lowest)
     final_df = final_df.sort_values('Orders', ascending=False)
@@ -1954,9 +2047,15 @@ def main():
                             
                             # Process impression share analysis
                             with st.spinner("Processing impression share analysis..."):
+                                # Check if Tab 1 SQP data is available in session state
+                                sqp_data = None
+                                if hasattr(st.session_state, 'tab1_full_df'):
+                                    sqp_data = st.session_state.tab1_full_df
+                                    st.info(f"📊 Using Search Query Performance data from Tab 1 for trend analysis ({len(sqp_data)} records)")
+                                
                                 impression_share_df, baseline = process_impression_share_analysis(
                                     df_ad_product, st_imp_product_df, selected_asin_imp, 
-                                    df_business_report, df_targeting_report_final, df_top_search_term_final, st_imp_top_search_term_df, st_imp_brand_df
+                                    df_business_report, df_targeting_report_final, df_top_search_term_final, st_imp_top_search_term_df, st_imp_brand_df, sqp_data
                                 )
                             
                             if impression_share_df is not None and len(impression_share_df) > 0:
@@ -2097,6 +2196,26 @@ def main():
                                             "Conversion Competitive Intensity",
                                             help="Minimum # of competing products winning conversions (Remaining / 3rd product share)",
                                             format="%.2f"
+                                        ),
+                                        "Vol Trend": st.column_config.TextColumn(
+                                            "Volume Trend",
+                                            help="Search volume trend: direction and % change over time (from Tab 1 data)"
+                                        ),
+                                        "Imp Share Trend": st.column_config.TextColumn(
+                                            "Imp Share Trend",
+                                            help="Impression share trend: direction and % change over time (from Tab 1 data)"
+                                        ),
+                                        "Click Share Trend": st.column_config.TextColumn(
+                                            "Click Share Trend",
+                                            help="Click share trend: direction and % change over time (from Tab 1 data)"
+                                        ),
+                                        "Purch Share Trend": st.column_config.TextColumn(
+                                            "Purchase Share Trend",
+                                            help="Purchase share trend: direction and % change over time (from Tab 1 data)"
+                                        ),
+                                        "Data_Points": st.column_config.NumberColumn(
+                                            "Data Points",
+                                            help="Number of data points available for trend analysis"
                                         )
                                     }
                                 )
@@ -2208,6 +2327,26 @@ def main():
                                     
                                     return intensity_info
                                 
+                                # Helper function to get trend information
+                                def get_trend_info(row):
+                                    """Extract and format trend information from Tab 1 data"""
+                                    trend_info = ""
+                                    
+                                    try:
+                                        vol_trend = row.get('Vol Trend', None)
+                                        imp_trend = row.get('Imp Share Trend', None)
+                                        click_trend = row.get('Click Share Trend', None)
+                                        purch_trend = row.get('Purch Share Trend', None)
+                                        data_points = row.get('Data_Points', 0)
+                                        
+                                        # Only show if we have valid data (not None and not 'N/A')
+                                        if vol_trend and vol_trend != 'N/A' and data_points > 0:
+                                            trend_info = f" | 📊 Trends: Vol {vol_trend}, Imp {imp_trend}, Click {click_trend}, Purch {purch_trend}"
+                                    except:
+                                        pass
+                                    
+                                    return trend_info
+                                
                                 # High performing top rank terms - Already maximized
                                 if 'Category' in impression_share_df.columns:
                                     top_rank_terms = impression_share_df[
@@ -2226,8 +2365,9 @@ def main():
                                             
                                             match_info = get_match_type_info(row)
                                             intensity_info = get_competitive_intensity_info(row)
+                                            trend_info = get_trend_info(row)
                                             
-                                            st.write(f"• **{row['Search Term']}** - Rank: {row['Impression Rank']:.1f}, Imp Share: {row['Impression Share %']:.2f}%, ACR: {acr_formatted} vs Baseline: {baseline:.2f}% - Performance maximized{match_info}{intensity_info}")
+                                            st.write(f"• **{row['Search Term']}** - Rank: {row['Impression Rank']:.1f}, Imp Share: {row['Impression Share %']:.2f}%, ACR: {acr_formatted} vs Baseline: {baseline:.2f}% - Performance maximized{match_info}{intensity_info}{trend_info}")
                                 
                                 # High opportunity terms
                                 high_opportunity = impression_share_df[
@@ -2246,8 +2386,9 @@ def main():
                                         
                                         match_info = get_match_type_info(row)
                                         intensity_info = get_competitive_intensity_info(row)
+                                        trend_info = get_trend_info(row)
                                         
-                                        st.write(f"• **{row['Search Term']}** - Rank: {row['Impression Rank']:.1f}, Imp Share: {row['Impression Share %']:.2f}%, ACR: {acr_formatted} - {row['Recommendations']}{match_info}{intensity_info}")
+                                        st.write(f"• **{row['Search Term']}** - Rank: {row['Impression Rank']:.1f}, Imp Share: {row['Impression Share %']:.2f}%, ACR: {acr_formatted} - {row['Recommendations']}{match_info}{intensity_info}{trend_info}")
                                 
                                 # Promising terms to scale
                                 promising_terms = impression_share_df[
@@ -2266,8 +2407,9 @@ def main():
                                         
                                         match_info = get_match_type_info(row)
                                         intensity_info = get_competitive_intensity_info(row)
+                                        trend_info = get_trend_info(row)
                                         
-                                        st.write(f"• **{row['Search Term']}** - Rank: {row['Impression Rank']:.1f}, Imp Share: {row['Impression Share %']:.2f}%, ACR: {acr_formatted} vs Baseline: {baseline:.2f}% - {row['Recommendations']}{match_info}{intensity_info}")
+                                        st.write(f"• **{row['Search Term']}** - Rank: {row['Impression Rank']:.1f}, Imp Share: {row['Impression Share %']:.2f}%, ACR: {acr_formatted} vs Baseline: {baseline:.2f}% - {row['Recommendations']}{match_info}{intensity_info}{trend_info}")
                                 
                                 # Gray Zone terms - Scenario B
                                 gray_zone_terms = impression_share_df[
@@ -2286,8 +2428,9 @@ def main():
                                         
                                         match_info = get_match_type_info(row)
                                         intensity_info = get_competitive_intensity_info(row)
+                                        trend_info = get_trend_info(row)
                                         
-                                        st.write(f"• **{row['Search Term']}** - Rank: {row['Impression Rank']:.1f}, Imp Share: {row['Impression Share %']:.2f}%, ACR: {acr_formatted} vs Baseline: {baseline:.2f}% - {row['Recommendations']}{match_info}{intensity_info}")
+                                        st.write(f"• **{row['Search Term']}** - Rank: {row['Impression Rank']:.1f}, Imp Share: {row['Impression Share %']:.2f}%, ACR: {acr_formatted} vs Baseline: {baseline:.2f}% - {row['Recommendations']}{match_info}{intensity_info}{trend_info}")
                                 
                                 # Download button for impression share analysis
                                 csv_impression = filtered_df.to_csv(index=False)
