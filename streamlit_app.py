@@ -868,11 +868,11 @@ def process_impression_share_analysis(df_ad_product, st_imp_df, selected_asin, d
             try:
                 # Get individual product shares for competitive intensity calculation
                 individual_shares_df = st_imp_top_search_term_df[['Search Term', 
-                                                                'Top Clicked Product #1: Click Share',
-                                                                'Top Clicked Product #2: Click Share', 
+                                                                # 'Top Clicked Product #1: Click Share',
+                                                                # 'Top Clicked Product #2: Click Share', 
                                                                 'Top Clicked Product #3: Click Share',
-                                                                'Top Clicked Product #1: Conversion Share',
-                                                                'Top Clicked Product #2: Conversion Share',
+                                                                # 'Top Clicked Product #1: Conversion Share',
+                                                                # 'Top Clicked Product #2: Conversion Share',
                                                                 'Top Clicked Product #3: Conversion Share']].copy()
                 
                 # Merge individual shares
@@ -902,10 +902,11 @@ def process_impression_share_analysis(df_ad_product, st_imp_df, selected_asin, d
                 final_df = pd.concat([final_df, competitive_metrics], axis=1)
                 
                 # Clean up individual share columns (keep them for reference but move to end)
-                individual_cols = ['Top Clicked Product #1: Click Share', 'Top Clicked Product #2: Click Share', 
-                                 'Top Clicked Product #3: Click Share', 'Top Clicked Product #1: Conversion Share',
-                                 'Top Clicked Product #2: Conversion Share', 'Top Clicked Product #3: Conversion Share']
+                # individual_cols = ['Top Clicked Product #1: Click Share', 'Top Clicked Product #2: Click Share', 
+                #                  'Top Clicked Product #3: Click Share', 'Top Clicked Product #1: Conversion Share',
+                #                  'Top Clicked Product #2: Conversion Share', 'Top Clicked Product #3: Conversion Share']
                 
+                individual_cols = []
                 # Reorder columns to put competitive intensity metrics after top_3 shares
                 main_cols = [col for col in final_df.columns if col not in individual_cols]
                 final_df = final_df[main_cols + individual_cols]
