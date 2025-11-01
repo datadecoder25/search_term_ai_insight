@@ -686,11 +686,15 @@ def process_impression_share_analysis(df_ad_product, st_imp_df, selected_asin, d
         '7 Day Total Sales ($)': 'sum'
     }).reset_index()
     
-    # Filter for search terms with ≥ 3 orders
+    # Store unfiltered data before applying order filter
+    all_grouped_df = grouped_df.copy()
+    
+    # Filter for search terms with ≥ 3 orders for main analysis
     grouped_df = grouped_df[grouped_df['7 Day Total Orders (#)'] >= 3].copy()
     
     if len(grouped_df) == 0:
-        return None, None
+        # Return None for main df but still return unfiltered data
+        return None, None, all_grouped_df
     
     # Convert impression share to decimal if it's in percentage
     if grouped_df['Search Term Impression Share'].max() > 1:
@@ -1015,7 +1019,101 @@ def process_impression_share_analysis(df_ad_product, st_imp_df, selected_asin, d
     # Sort by orders (highest to lowest)
     final_df = final_df.sort_values('Orders', ascending=False)
     
-    return final_df, baseline_unit_session_percentage
+    # Process the unfiltered data for low-order queries analysis
+    all_queries_df = None
+    if all_grouped_df is not None and len(all_grouped_df) > 0:
+        # Convert impression share to decimal if it's in percentage
+        if all_grouped_df['Search Term Impression Share'].max() > 1:
+            all_grouped_df['Search Term Impression Share'] = all_grouped_df['Search Term Impression Share'] / 100
+        
+        # Calculate ACR (Ad Conversion Rate)
+        all_grouped_df['ACR'] = np.where(
+            all_grouped_df['Clicks'] != 0,
+            all_grouped_df['7 Day Total Orders (#)'] * 100 / all_grouped_df['Clicks'],
+            None
+        )
+        
+        # Convert impression share back to percentage for display
+        all_grouped_df['Search Term Impression Share'] = all_grouped_df['Search Term Impression Share'] * 100
+        
+        # Select final columns
+        all_queries_df = all_grouped_df[['Customer Search Term', 'Search Term Impression Rank', 
+                              'Search Term Impression Share', 'Impressions', 'Clicks',
+                              '7 Day Total Orders (#)', 'ACR']].copy()
+        
+        all_queries_df.columns = ['Search Term', 'Impression Rank', 'Impression Share %', 
+                           'Impressions', 'Clicks', 'Orders', 'ACR %']
+        
+        # Clean ACR column
+        if 'ACR %' in all_queries_df.columns:
+            all_queries_df['ACR_display'] = all_queries_df['ACR %'].astype(str)
+            all_queries_df['ACR_numeric'] = all_queries_df['ACR %'].astype(str).str.replace('%', '', regex=False)
+            all_queries_df['ACR_numeric'] = pd.to_numeric(all_queries_df['ACR_numeric'], errors='coerce')
+            all_queries_df['ACR %'] = all_queries_df['ACR_numeric']
+        
+        # Add the same match type columns and other processing
+        # Process targeting report data for match type columns (SP)
+        if df_targeting_report_final is not None:
+            try:
+                for match_type in ['EXACT', 'PHRASE', 'BROAD']:
+                    all_queries_df[f'SP_{match_type}_Match'] = all_queries_df['Search Term'].apply(
+                        lambda x: 'Targeted' if x in targeting_data[match_type] else 'Not Targeted'
+                    )
+            except:
+                pass
+        
+        # Process brand targeting data for match type columns (SB)
+        if st_imp_brand_df is not None:
+            try:
+                for match_type in ['EXACT', 'PHRASE', 'BROAD']:
+                    all_queries_df[f'SB_{match_type}_Match'] = all_queries_df['Search Term'].apply(
+                        lambda x: 'Targeted' if x in brand_targeting_data.get(match_type, set()) else 'Not Targeted'
+                    )
+            except:
+                pass
+        
+        # Add Top Search Term data if available
+        if df_top_search_term_final is not None:
+            try:
+                all_queries_df = pd.merge(
+                    all_queries_df, 
+                    df_top_search_term_final[['Search Term', 'top_3_click_share', 'top_3_conversion_share']], 
+                    on='Search Term', 
+                    how='left'
+                )
+                all_queries_df['top_3_click_share'] = all_queries_df['top_3_click_share'].fillna(0)
+                all_queries_df['top_3_conversion_share'] = all_queries_df['top_3_conversion_share'].fillna(0)
+            except:
+                pass
+        
+        # Add trend analysis if available
+        if sqp_df is not None and len(sqp_df) > 0:
+            try:
+                # Reuse the trend columns if they were created
+                if 'Vol Trend' in final_df.columns:
+                    # Merge trend columns from final_df
+                    trend_cols_to_merge = ['Search Term', 'Vol Trend', 'Imp Share Trend', 'Click Share Trend', 'Purch Share Trend', 'Data_Points']
+                    available_trend_cols = [col for col in trend_cols_to_merge if col in final_df.columns]
+                    
+                    if len(available_trend_cols) > 1:  # At least Search Term + one trend column
+                        all_queries_df = pd.merge(
+                            all_queries_df,
+                            final_df[available_trend_cols],
+                            on='Search Term',
+                            how='left'
+                        )
+                        
+                        # Fill NaN values
+                        for col in ['Vol Trend', 'Imp Share Trend', 'Click Share Trend', 'Purch Share Trend']:
+                            if col in all_queries_df.columns:
+                                all_queries_df[col] = all_queries_df[col].fillna('N/A')
+                        
+                        if 'Data_Points' in all_queries_df.columns:
+                            all_queries_df['Data_Points'] = all_queries_df['Data_Points'].fillna(0).astype(int)
+            except:
+                pass
+    
+    return final_df, baseline_unit_session_percentage, all_queries_df
 
 def process_search_term_analysis(df_ad_product, st_imp_df, selected_asin, df_top_search_term_final, df_targeting_report_final, df_business_report):
     """
@@ -1431,6 +1529,7 @@ def main():
         if uploaded_files and load_data_tab1:
             with st.spinner("Processing uploaded CSV files..."):
                 combined_df = load_and_combine_uploaded_csvs(uploaded_files)
+        
                 
                 if combined_df is not None:
                     # Process data
@@ -1441,7 +1540,6 @@ def main():
                     st.session_state.tab1_full_df = full_df
                     st.session_state.tab1_freq_option = freq_option
                     st.session_state.tab1_data_loaded = True
-        
         # Check if data exists in session state
         if hasattr(st.session_state, 'tab1_data_loaded') and st.session_state.tab1_data_loaded:
             # Retrieve data from session state
@@ -2053,7 +2151,7 @@ def main():
                                     sqp_data = st.session_state.tab1_full_df
                                     st.info(f"📊 Using Search Query Performance data from Tab 1 for trend analysis ({len(sqp_data)} records)")
                                 
-                                impression_share_df, baseline = process_impression_share_analysis(
+                                impression_share_df, baseline, all_queries_df = process_impression_share_analysis(
                                     df_ad_product, st_imp_product_df, selected_asin_imp, 
                                     df_business_report, df_targeting_report_final, df_top_search_term_final, st_imp_top_search_term_df, st_imp_brand_df, sqp_data
                                 )
@@ -2431,6 +2529,120 @@ def main():
                                         trend_info = get_trend_info(row)
                                         
                                         st.write(f"• **{row['Search Term']}** - Rank: {row['Impression Rank']:.1f}, Imp Share: {row['Impression Share %']:.2f}%, ACR: {acr_formatted} vs Baseline: {baseline:.2f}% - {row['Recommendations']}{match_info}{intensity_info}{trend_info}")
+                                
+                                # New Section: Low Order Search Queries Analysis (< 3 orders)
+                                st.markdown("---")
+                                st.subheader("🔍 Low Order Search Queries Analysis (< 3 Orders)")
+                                st.caption("Analysis of search queries with potential but limited current ad performance")
+                                
+                                # Use all_queries_df which contains ALL queries (not filtered by ≥3 orders)
+                                if all_queries_df is not None and len(all_queries_df) > 0:
+                                    # Filter for queries with < 3 orders
+                                    low_order_queries = all_queries_df[all_queries_df['Orders'] < 3].copy()
+                                else:
+                                    low_order_queries = pd.DataFrame()  # Empty dataframe
+                                
+                                if len(low_order_queries) > 0:
+                                    # Check if we have SQP data with search volume
+                                    if sqp_data is not None and 'Search Query Volume' in sqp_data.columns:
+                                        # Get search volume for each query
+                                        volume_data = sqp_data.groupby('Search Query')['Search Query Volume'].mean().reset_index()
+                                        volume_data.columns = ['Search Term', 'Avg Search Volume']
+                                        
+                                        # Merge with low order queries
+                                        low_order_queries = pd.merge(
+                                            low_order_queries,
+                                            volume_data,
+                                            on='Search Term',
+                                            how='left'
+                                        )
+                                        low_order_queries['Avg Search Volume'] = low_order_queries['Avg Search Volume'].fillna(0)
+                                        
+                                        # Split into high-volume (≥1000) and low-volume (<1000)
+                                        high_vol_low_orders = low_order_queries[low_order_queries['Avg Search Volume'] >= 1000].copy()
+                                        low_vol_low_orders = low_order_queries[low_order_queries['Avg Search Volume'] < 1000].copy()
+                                        
+                                        # High Volume Queries (≥1,000 searches/month)
+                                        if len(high_vol_low_orders) > 0:
+                                            st.success(f"🎯 **High-Volume, Low-Order Queries** ({len(high_vol_low_orders)} terms - ≥1,000 searches/month)")
+                                            st.markdown("*These queries have high search volume but low ad sales. High organic share suggests ad potential.*")
+                                            
+                                            # Sort by search volume descending
+                                            high_vol_low_orders = high_vol_low_orders.sort_values('Avg Search Volume', ascending=False)
+                                            
+                                            for _, row in high_vol_low_orders.head(10).iterrows():
+                                                match_info = get_match_type_info(row)
+                                                trend_info = get_trend_info(row)
+                                                intensity_info = get_competitive_intensity_info(row)
+                                                
+                                                # Get organic share info if available
+                                                organic_info = ""
+                                                if 'top_3_click_share' in row and not pd.isna(row['top_3_click_share']):
+                                                    organic_info = f" | 🌱 Top 3 Click Share: {row['top_3_click_share']:.1f}%"
+                                                if 'top_3_conversion_share' in row and not pd.isna(row['top_3_conversion_share']):
+                                                    organic_info += f", Conv Share: {row['top_3_conversion_share']:.1f}%"
+                                                
+                                                st.write(f"• **{row['Search Term']}** - Vol: {row['Avg Search Volume']:.0f}/mo, Orders: {row['Orders']:.0f}, Imp Share: {row['Impression Share %']:.2f}%{match_info}{organic_info}{intensity_info}{trend_info}")
+                                                st.caption(f"   💡 **Opportunity**: High search volume with low ad sales - consider increasing bids or adding to campaigns")
+                                            
+                                            if len(high_vol_low_orders) > 10:
+                                                with st.expander(f"📋 View all {len(high_vol_low_orders)} high-volume, low-order queries"):
+                                                    st.dataframe(
+                                                        high_vol_low_orders[['Search Term', 'Avg Search Volume', 'Orders', 'Impressions', 
+                                                                            'Clicks', 'Impression Share %', 'SP_EXACT_Match', 'SP_PHRASE_Match', 
+                                                                            'SP_BROAD_Match', 'SB_EXACT_Match', 'SB_PHRASE_Match', 'SB_BROAD_Match']],
+                                                        use_container_width=True,
+                                                        hide_index=True
+                                                    )
+                                        
+                                        # Low Volume Queries (<1,000 searches/month)
+                                        if len(low_vol_low_orders) > 0:
+                                            st.info(f"📌 **Low-Volume, Low-Order Queries** ({len(low_vol_low_orders)} terms - <1,000 searches/month)")
+                                            st.markdown("*These queries have low search volume and low ad sales. Manual review recommended.*")
+                                            
+                                            # Group by ad targeting to show where they're advertised
+                                            with st.expander(f"📋 View {len(low_vol_low_orders)} low-volume queries by ad coverage"):
+                                                # Sort by search volume descending
+                                                low_vol_low_orders = low_vol_low_orders.sort_values('Avg Search Volume', ascending=False)
+                                                
+                                                # Show which campaigns/match types are targeting these
+                                                display_cols = ['Search Term', 'Avg Search Volume', 'Orders', 'Impressions', 'Clicks']
+                                                
+                                                # Add match type columns if they exist
+                                                for col in ['SP_EXACT_Match', 'SP_PHRASE_Match', 'SP_BROAD_Match', 
+                                                          'SB_EXACT_Match', 'SB_PHRASE_Match', 'SB_BROAD_Match']:
+                                                    if col in low_vol_low_orders.columns:
+                                                        display_cols.append(col)
+                                                
+                                                st.dataframe(
+                                                    low_vol_low_orders[display_cols],
+                                                    use_container_width=True,
+                                                    hide_index=True
+                                                )
+                                                
+                                                st.caption("💡 **Recommendation**: Review these terms for relevance. Consider pausing if not relevant or increasing bids if relevant but underperforming.")
+                                    
+                                    else:
+                                        # If no SQP data, just show the low order queries
+                                        st.warning(f"⚠️ Found {len(low_order_queries)} queries with < 3 orders")
+                                        st.info("💡 Upload Search Query Performance data in Tab 1 to get volume-based analysis and prioritization")
+                                        
+                                        with st.expander(f"📋 View all {len(low_order_queries)} low-order queries"):
+                                            display_cols = ['Search Term', 'Orders', 'Impressions', 'Clicks', 'Impression Share %']
+                                            
+                                            # Add match type columns if they exist
+                                            for col in ['SP_EXACT_Match', 'SP_PHRASE_Match', 'SP_BROAD_Match', 
+                                                      'SB_EXACT_Match', 'SB_PHRASE_Match', 'SB_BROAD_Match']:
+                                                if col in low_order_queries.columns:
+                                                    display_cols.append(col)
+                                            
+                                            st.dataframe(
+                                                low_order_queries[display_cols],
+                                                use_container_width=True,
+                                                hide_index=True
+                                            )
+                                else:
+                                    st.success("✅ No search queries with < 3 orders found. All queries meet the minimum threshold!")
                                 
                                 # Download button for impression share analysis
                                 csv_impression = filtered_df.to_csv(index=False)
