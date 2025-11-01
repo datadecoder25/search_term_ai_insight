@@ -2157,19 +2157,55 @@ def main():
                                         if sp_targeted:
                                             match_info += f" | SP Targeted: {', '.join(sp_targeted)}"
                                         if sp_non_targeted:
-                                            match_info += f" | ⚠️ SP Increase bid: {', '.join(sp_non_targeted)}"
+                                            match_info += f" | ⚠️ SP Not Targeted: {', '.join(sp_non_targeted)}"
                                     
                                     # SB Info
                                     if sb_targeted or sb_non_targeted:
                                         if sb_targeted:
                                             match_info += f" | SB Targeted: {', '.join(sb_targeted)}"
                                         if sb_non_targeted:
-                                            match_info += f" | ⚠️ SB Increase bid: {', '.join(sb_non_targeted)}"
+                                            match_info += f" | ⚠️ SB Not Targeted: {', '.join(sb_non_targeted)}"
                                     
                                     if not match_info:
                                         match_info = " | Match Types: Not detected"
                                     
                                     return match_info
+                                
+                                # Helper function to get competitive intensity insights
+                                def get_competitive_intensity_info(row):
+                                    """Analyze competitive intensity and provide insights"""
+                                    if 'Click Competitive Intensity' not in row or 'Conversion Competitive Intensity' not in row:
+                                        return ""
+                                    
+                                    click_intensity = row.get('Click Competitive Intensity', 0)
+                                    conversion_intensity = row.get('Conversion Competitive Intensity', 0)
+                                    
+                                    # Skip if no data
+                                    if pd.isna(click_intensity) or pd.isna(conversion_intensity):
+                                        return ""
+                                    
+                                    intensity_info = ""
+                                    
+                                    # High competitive intensity (>5) = many competitors, good opportunity
+                                    # Low competitive intensity (<3) = concentrated market, harder to break in
+                                    
+                                    # Click Intensity Analysis
+                                    if click_intensity > 5:
+                                        intensity_info += f" | 🎯 Click Market: Fragmented ({click_intensity:.1f}) - High opportunity to gain clicks"
+                                    elif click_intensity >= 3:
+                                        intensity_info += f" | 📊 Click Market: Moderate competition ({click_intensity:.1f}) - Room for growth"
+                                    elif click_intensity > 0:
+                                        intensity_info += f" | ⚠️ Click Market: Concentrated ({click_intensity:.1f}) - Top 3 dominate, hard to scale"
+                                    
+                                    # Conversion Intensity Analysis
+                                    if conversion_intensity > 5:
+                                        intensity_info += f" | 💰 Conversion Market: Fragmented ({conversion_intensity:.1f}) - High opportunity to capture conversions"
+                                    elif conversion_intensity >= 3:
+                                        intensity_info += f" | 📈 Conversion Market: Moderate competition ({conversion_intensity:.1f}) - Potential for growth"
+                                    elif conversion_intensity > 0:
+                                        intensity_info += f" | ⚠️ Conversion Market: Concentrated ({conversion_intensity:.1f}) - Top 3 dominate, challenging"
+                                    
+                                    return intensity_info
                                 
                                 # High performing top rank terms - Already maximized
                                 if 'Category' in impression_share_df.columns:
@@ -2188,8 +2224,9 @@ def main():
                                                 acr_formatted = row['ACR %']
                                             
                                             match_info = get_match_type_info(row)
+                                            intensity_info = get_competitive_intensity_info(row)
                                             
-                                            st.write(f"• **{row['Search Term']}** - Rank: {row['Impression Rank']:.1f}, Imp Share: {row['Impression Share %']:.2f}%, ACR: {acr_formatted} vs Baseline: {baseline:.2f}% - Performance maximized{match_info}")
+                                            st.write(f"• **{row['Search Term']}** - Rank: {row['Impression Rank']:.1f}, Imp Share: {row['Impression Share %']:.2f}%, ACR: {acr_formatted} vs Baseline: {baseline:.2f}% - Performance maximized{match_info}{intensity_info}")
                                 
                                 # High opportunity terms
                                 high_opportunity = impression_share_df[
@@ -2207,8 +2244,9 @@ def main():
                                             acr_formatted = row['ACR %']
                                         
                                         match_info = get_match_type_info(row)
+                                        intensity_info = get_competitive_intensity_info(row)
                                         
-                                        st.write(f"• **{row['Search Term']}** - Rank: {row['Impression Rank']:.1f}, Imp Share: {row['Impression Share %']:.2f}%, ACR: {acr_formatted} - {row['Recommendations']}{match_info}")
+                                        st.write(f"• **{row['Search Term']}** - Rank: {row['Impression Rank']:.1f}, Imp Share: {row['Impression Share %']:.2f}%, ACR: {acr_formatted} - {row['Recommendations']}{match_info}{intensity_info}")
                                 
                                 # Promising terms to scale
                                 promising_terms = impression_share_df[
@@ -2226,8 +2264,9 @@ def main():
                                             acr_formatted = row['ACR %']
                                         
                                         match_info = get_match_type_info(row)
+                                        intensity_info = get_competitive_intensity_info(row)
                                         
-                                        st.write(f"• **{row['Search Term']}** - Rank: {row['Impression Rank']:.1f}, Imp Share: {row['Impression Share %']:.2f}%, ACR: {acr_formatted} vs Baseline: {baseline:.2f}% - {row['Recommendations']}{match_info}")
+                                        st.write(f"• **{row['Search Term']}** - Rank: {row['Impression Rank']:.1f}, Imp Share: {row['Impression Share %']:.2f}%, ACR: {acr_formatted} vs Baseline: {baseline:.2f}% - {row['Recommendations']}{match_info}{intensity_info}")
                                 
                                 # Gray Zone terms - Scenario B
                                 gray_zone_terms = impression_share_df[
@@ -2245,8 +2284,9 @@ def main():
                                             acr_formatted = row['ACR %']
                                         
                                         match_info = get_match_type_info(row)
+                                        intensity_info = get_competitive_intensity_info(row)
                                         
-                                        st.write(f"• **{row['Search Term']}** - Rank: {row['Impression Rank']:.1f}, Imp Share: {row['Impression Share %']:.2f}%, ACR: {acr_formatted} vs Baseline: {baseline:.2f}% - {row['Recommendations']}{match_info}")
+                                        st.write(f"• **{row['Search Term']}** - Rank: {row['Impression Rank']:.1f}, Imp Share: {row['Impression Share %']:.2f}%, ACR: {acr_formatted} vs Baseline: {baseline:.2f}% - {row['Recommendations']}{match_info}{intensity_info}")
                                 
                                 # Download button for impression share analysis
                                 csv_impression = filtered_df.to_csv(index=False)
