@@ -2466,6 +2466,190 @@ def main():
                                             trend_info = get_trend_info(row)
                                             
                                             st.write(f"• **{row['Search Term']}** - Rank: {row['Impression Rank']:.1f}, Imp Share: {row['Impression Share %']:.2f}%, ACR: {acr_formatted} vs Baseline: {baseline:.2f}% - Performance maximized{match_info}{intensity_info}{trend_info}")
+                                        
+                                        # GPT-powered Time Series Analysis for Top Performing Terms
+                                        st.markdown("---")
+                                        st.markdown("#### 🤖 AI-Powered Time Series Analysis for Top Performing Terms")
+                                        st.caption("Get detailed GPT analysis of month-over-month trends, fluctuations, and performance patterns")
+                                        
+                                        # Initialize session state for API key if not exists
+                                        if 'openai_api_key' not in st.session_state:
+                                            st.session_state.openai_api_key = ""
+                                        
+                                        # API Key input - not in expander to keep it visible and preserve state
+                                        st.markdown("##### ⚙️ OpenAI API Configuration")
+                                        
+                                        col_api1, col_api2 = st.columns([3, 1])
+                                        
+                                        with col_api1:
+                                            # Use session state to persist the API key
+                                            api_key_input = st.text_input(
+                                                "Enter your OpenAI API Key",
+                                                type="password",
+                                                value=st.session_state.openai_api_key,
+                                                help="Your API key will be stored only for this session. It will be cleared when you close the browser tab.",
+                                                key="openai_api_key_input_top_terms",
+                                                placeholder="sk-..."
+                                            )
+                                            
+                                            # Update session state
+                                            if api_key_input:
+                                                st.session_state.openai_api_key = api_key_input
+                                        
+                                        with col_api2:
+                                            # Add clear button
+                                            if st.session_state.openai_api_key:
+                                                st.write("")  # Spacing
+                                                st.write("")  # Spacing
+                                                if st.button("🗑️ Clear Key", key="clear_api_key_top_terms"):
+                                                    st.session_state.openai_api_key = ""
+                                                    st.rerun()
+                                        
+                                        st.caption("Don't have an API key? Get one at [OpenAI Platform](https://platform.openai.com/api-keys)")
+                                        
+                                        # Use the API key from session state
+                                        openai_api_key = st.session_state.openai_api_key
+                                        
+                                        # Check if we have SQP data and API key
+                                        if openai_api_key and sqp_data is not None and len(sqp_data) > 0:
+                                            if st.button("🚀 Analyze Top Performing Terms with GPT", type="primary", key="analyze_top_terms_gpt"):
+                                                with st.spinner("🤖 Analyzing trends with GPT..."):
+                                                    try:
+                                                        import openai
+                                                        import json
+                                                        
+                                                        # Get top performing search terms
+                                                        top_terms_list = top_rank_terms.head(5)['Search Term'].tolist()
+                                                        
+                                                        # Filter for terms that have time series data in SQP
+                                                        terms_with_data = []
+                                                        for term in top_terms_list:
+                                                            if term in sqp_data['Search Query'].values:
+                                                                term_count = len(sqp_data[sqp_data['Search Query'] == term])
+                                                                if term_count >= 2:  # At least 2 data points
+                                                                    terms_with_data.append(term)
+                                                        
+                                                        if len(terms_with_data) == 0:
+                                                            st.warning("⚠️ No time series data available for top performing terms. Upload Search Query Performance data in Tab 1.")
+                                                        else:
+                                                            # Check if required columns exist in SQP data
+                                                            required_sqp_cols = ['Search Query Volume', 'Impressions: ASIN Share %', 'Clicks: ASIN Share %']
+                                                            missing_sqp_cols = [col for col in required_sqp_cols if col not in sqp_data.columns]
+                                                            
+                                                            if missing_sqp_cols:
+                                                                st.error(f"❌ Missing required columns in SQP data: {', '.join(missing_sqp_cols)}")
+                                                                st.info(f"Available columns: {', '.join(sqp_data.columns.tolist()[:10])}...")
+                                                            else:
+                                                                # Collect time series data for each term
+                                                                all_terms_analysis = []
+                                                                
+                                                                for term in terms_with_data:
+                                                                    term_data = sqp_data[sqp_data['Search Query'] == term].copy()
+                                                                    term_data = term_data.sort_values('Date')
+                                                                    
+                                                                    # Extract time series - use original column names from SQP data
+                                                                    time_series = {
+                                                                        'search_term': term,
+                                                                        'dates': term_data['Date'].dt.strftime('%Y-%m').tolist(),
+                                                                        'volume': term_data['Search Query Volume'].tolist(),
+                                                                        'impression_share': term_data['Impressions: ASIN Share %'].tolist(),
+                                                                        'click_share': term_data['Clicks: ASIN Share %'].tolist()
+                                                                    }
+                                                                    all_terms_analysis.append(time_series)
+                                                                
+                                                                # Analyze each term individually
+                                                                st.success(f"✅ Analyzing {len(terms_with_data)} top performing term(s)")
+                                                                
+                                                                for idx, term_data in enumerate(all_terms_analysis, 1):
+                                                                    st.markdown(f"### 📈 Analysis {idx}: **{term_data['search_term']}**")
+                                                                    
+                                                                    # Create detailed prompt for this term
+                                                                    prompt = f"""You are an Amazon PPC expert analyzing a top-performing search term's time series data.
+
+**Search Term**: "{term_data['search_term']}"
+**Status**: Top Performing (Already maximized performance with high impression rank and strong conversion rates)
+
+**Time Series Data** (Month by Month):
+{json.dumps({
+    'dates': term_data['dates'],
+    'volume': term_data['volume'],
+    'impression_share_percent': term_data['impression_share'],
+    'click_share_percent': term_data['click_share']
+}, indent=2)}
+
+Please provide a comprehensive analysis covering:
+
+1. **Month-over-Month Changes**:
+   - Detailed breakdown of how Volume, Impression Share, and Click Share changed each month
+   - Calculate and highlight significant increases or decreases (>10%)
+   - Identify any concerning drops or impressive gains
+
+2. **Fluctuation Analysis**:
+   - Describe the stability or volatility of each metric
+   - Identify any seasonal patterns or recurring trends
+   - Flag any unusual spikes or drops that need attention
+
+3. **Performance Assessment**:
+   - Is the brand maintaining its dominant position consistently?
+   - Are there any warning signs of declining market share?
+   - How well is the brand capitalizing on search volume changes?
+
+4. **Strategic Recommendations**:
+   - Specific actions to maintain or improve this top-performing position
+   - Areas of concern that need monitoring
+   - Opportunities to further strengthen market position
+
+Keep the analysis data-driven and actionable. Use bullet points for clarity."""
+
+                                                                    # Call OpenAI API for this term
+                                                                    openai.api_key = openai_api_key
+                                                                    response = openai.chat.completions.create(
+                                                                        model="gpt-4o-mini",
+                                                                        messages=[
+                                                                            {"role": "system", "content": "You are an expert Amazon PPC analyst specializing in search term performance optimization."},
+                                                                            {"role": "user", "content": prompt}
+                                                                        ],
+                                                                        temperature=0.7,
+                                                                        max_tokens=1500
+                                                                    )
+                                                                    
+                                                                    # Display the analysis
+                                                                    st.markdown(response.choices[0].message.content)
+                                                                    
+                                                                    # Show the raw data in an expander
+                                                                    with st.expander(f"📊 View Raw Time Series Data for '{term_data['search_term']}'"):
+                                                                        df_display = pd.DataFrame({
+                                                                            'Date': term_data['dates'],
+                                                                            'Volume': term_data['volume'],
+                                                                            'Impression Share %': [f"{x:.2f}" for x in term_data['impression_share']],
+                                                                            'Click Share %': [f"{x:.2f}" for x in term_data['click_share']]
+                                                                        })
+                                                                        st.dataframe(df_display, use_container_width=True, hide_index=True)
+                                                                    
+                                                                    # Add separator between terms
+                                                                    if idx < len(all_terms_analysis):
+                                                                        st.markdown("---")
+                                                                
+                                                                st.success("✅ All analyses complete!")
+                                                    
+                                                    except ImportError:
+                                                        st.error("❌ OpenAI package not installed. Please run: `pip install openai`")
+                                                        st.code("pip install openai", language="bash")
+                                                    except Exception as e:
+                                                        if "invalid_api_key" in str(e).lower() or "incorrect api key" in str(e).lower():
+                                                            st.error("❌ Invalid API key. Please check your OpenAI API key and try again.")
+                                                        elif "insufficient_quota" in str(e).lower():
+                                                            st.error("❌ Insufficient quota. Please check your OpenAI account balance.")
+                                                        else:
+                                                            st.error(f"❌ Error analyzing with GPT: {str(e)}")
+                                                            st.caption("Please check your API key and internet connection.")
+                                        
+                                        elif not openai_api_key:
+                                            st.info("💡 Enter your OpenAI API key above to enable AI-powered trend analysis for top performing terms")
+                                        elif sqp_data is None or len(sqp_data) == 0:
+                                            st.warning("⚠️ No Search Query Performance data available. Upload SQP data in Tab 1 to enable this feature.")
+                                        
+                                        st.markdown("---")
                                 
                                 # High opportunity terms
                                 high_opportunity = impression_share_df[

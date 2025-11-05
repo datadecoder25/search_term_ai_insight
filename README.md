@@ -13,6 +13,7 @@ A Streamlit web application for analyzing Amazon search query performance data w
 - 💾 **Advanced Export**: Download data in CSV or Excel formats with custom date ranges
 - 🏷️ **Streamlined Interface**: Single-page workflow for seamless user experience
 - 🔄 **Automatic Processing**: Smart data cleaning and gap filling
+- 🤖 **AI-Powered Analysis**: GPT-based time series analysis for search term trends (requires OpenAI API key)
 
 ## Installation
 
@@ -38,6 +39,13 @@ streamlit run streamlit_app.py
    - Export data as needed
 
 4. The interface flows smoothly from data upload to analysis results on one page
+
+5. **AI-Powered Insights** (Optional):
+   - In Tab 2 "Impression Share Analysis", scroll to the "AI-Powered Time Series Analysis" section
+   - Enter your OpenAI API key (get one from [OpenAI Platform](https://platform.openai.com/api-keys))
+   - Select up to 5 search terms for in-depth trend analysis
+   - Get GPT-powered insights on volume, impression share, and click share trends
+   - Receive strategic recommendations and priority rankings
 
 ## Data Format
 
