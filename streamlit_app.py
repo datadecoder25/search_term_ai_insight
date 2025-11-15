@@ -2563,68 +2563,113 @@ def main():
                                                                 for idx, term_data in enumerate(all_terms_analysis, 1):
                                                                     st.markdown(f"### 📈 Analysis {idx}: **{term_data['search_term']}**")
                                                                     
+                                                                    # Create month-over-month changes table
+                                                                    mom_data = []
+                                                                    for i in range(1, len(term_data['dates'])):
+                                                                        prev_idx = i - 1
+                                                                        curr_idx = i
+                                                                        
+                                                                        # Volume changes
+                                                                        vol_change = term_data['volume'][curr_idx] - term_data['volume'][prev_idx]
+                                                                        vol_change_pct = (vol_change / term_data['volume'][prev_idx] * 100) if term_data['volume'][prev_idx] != 0 else 0
+                                                                        
+                                                                        # Impression Share changes
+                                                                        imp_change = term_data['impression_share'][curr_idx] - term_data['impression_share'][prev_idx]
+                                                                        imp_change_pct = (imp_change / term_data['impression_share'][prev_idx] * 100) if term_data['impression_share'][prev_idx] != 0 else 0
+                                                                        
+                                                                        # Click Share changes
+                                                                        click_change = term_data['click_share'][curr_idx] - term_data['click_share'][prev_idx]
+                                                                        click_change_pct = (click_change / term_data['click_share'][prev_idx] * 100) if term_data['click_share'][prev_idx] != 0 else 0
+                                                                        
+                                                                        mom_data.append({
+                                                                            'Period': f"{term_data['dates'][prev_idx]} → {term_data['dates'][curr_idx]}",
+                                                                            'Volume': f"{term_data['volume'][prev_idx]:,} → {term_data['volume'][curr_idx]:,}",
+                                                                            'Vol Change': f"{vol_change:+,.0f} ({vol_change_pct:+.1f}%)",
+                                                                            'Imp Share %': f"{term_data['impression_share'][prev_idx]:.2f}% → {term_data['impression_share'][curr_idx]:.2f}%",
+                                                                            'Imp Change': f"{imp_change:+.2f}pp ({imp_change_pct:+.1f}%)",
+                                                                            'Click Share %': f"{term_data['click_share'][prev_idx]:.2f}% → {term_data['click_share'][curr_idx]:.2f}%",
+                                                                            'Click Change': f"{click_change:+.2f}pp ({click_change_pct:+.1f}%)"
+                                                                        })
+                                                                    
+                                                                    # Display month-over-month table
+                                                                    st.markdown("#### 📊 Month-over-Month Changes")
+                                                                    mom_df = pd.DataFrame(mom_data)
+                                                                    st.dataframe(mom_df, use_container_width=True, hide_index=True)
+                                                                    
+                                                                    # Prepare summary data for GPT (without showing raw numbers in prompt)
+                                                                    # Calculate metrics for analysis
+                                                                    vol_start = term_data['volume'][0]
+                                                                    vol_end = term_data['volume'][-1]
+                                                                    vol_total_change = vol_end - vol_start
+                                                                    vol_total_change_pct = (vol_total_change / vol_start * 100) if vol_start != 0 else 0
+                                                                    
+                                                                    imp_start = term_data['impression_share'][0]
+                                                                    imp_end = term_data['impression_share'][-1]
+                                                                    imp_total_change = imp_end - imp_start
+                                                                    imp_total_change_pct = (imp_total_change / imp_start * 100) if imp_start != 0 else 0
+                                                                    
+                                                                    click_start = term_data['click_share'][0]
+                                                                    click_end = term_data['click_share'][-1]
+                                                                    click_total_change = click_end - click_start
+                                                                    click_total_change_pct = (click_total_change / click_start * 100) if click_start != 0 else 0
+                                                                    
+                                                                    # Build summary for GPT
+                                                                    summary = f"""
+Search Term: {term_data['search_term']}
+Time Period: {term_data['dates'][0]} to {term_data['dates'][-1]} ({len(term_data['dates'])} months)
+
+Overall Changes:
+- Volume: {vol_start:,} → {vol_end:,} ({vol_total_change:+,} units, {vol_total_change_pct:+.1f}%)
+- Impression Share: {imp_start:.2f}% → {imp_end:.2f}% ({imp_total_change:+.2f}pp, {imp_total_change_pct:+.1f}%)
+- Click Share: {click_start:.2f}% → {click_end:.2f}% ({click_total_change:+.2f}pp, {click_total_change_pct:+.1f}%)
+
+Month-by-Month Data:
+{chr(10).join([f"{term_data['dates'][i]}: Vol={term_data['volume'][i]:,}, Imp={term_data['impression_share'][i]:.2f}%, Click={term_data['click_share'][i]:.2f}%" for i in range(len(term_data['dates']))])}
+"""
+                                                                    
                                                                     # Create detailed prompt for this term
-                                                                    prompt = f"""You are an Amazon PPC expert analyzing a top-performing search term's time series data.
+                                                                    prompt = f"""You are an Amazon PPC expert. Analyze this top-performing search term's performance data and provide a concise analysis.
 
-**Search Term**: "{term_data['search_term']}"
-**Status**: Top Performing (Already maximized performance with high impression rank and strong conversion rates)
+{summary}
 
-**Time Series Data** (Month by Month):
-{json.dumps({
-    'dates': term_data['dates'],
-    'volume': term_data['volume'],
-    'impression_share_percent': term_data['impression_share'],
-    'click_share_percent': term_data['click_share']
-}, indent=2)}
+Provide a brief, actionable analysis (max 350 words):
 
-Please provide a comprehensive analysis covering:
+1. **Trend Story** (3-4 sentences): Describe the journey of the data. Example: "Volume started at 1,000 in January, stayed flat through April around 1,050, then jumped 13% (+150 units) in May to 1,187, remaining stable afterward."
 
-1. **Month-over-Month Changes**:
-   - Detailed breakdown of how Volume, Impression Share, and Click Share changed each month
-   - Calculate and highlight significant increases or decreases (>10%)
-   - Identify any concerning drops or impressive gains
+2. **Key Highlights**: List all the changes which are different from the usual patterns which are more than 10%:
+   - Format: "May: Volume +150 units (+13%) - likely due to increased market demand"
+   - Include actual change + percentage + basic reason (e.g., "market shift", "increased competition", "reduced visibility")
+   - DO NOT mention seasonality or seasonal patterns
 
-2. **Fluctuation Analysis**:
-   - Describe the stability or volatility of each metric
-   - Identify any seasonal patterns or recurring trends
-   - Flag any unusual spikes or drops that need attention
+3. **Stability & Performance** (3-4 sentences per metric):
+   - **Volume**: Overall trend + stability (stable/volatile/erratic) + what it indicates
+   - **Impression Share**: Trend + market position strength + consistency
+   - **Click Share**: Trend + performance quality + whether brand is maintaining dominance
 
-3. **Performance Assessment**:
-   - Is the brand maintaining its dominant position consistently?
-   - Are there any warning signs of declining market share?
-   - How well is the brand capitalizing on search volume changes?
+4. **Performance Assessment & Cautionary Guidance** (4-5 sentences):
+   - Is the brand maintaining its dominant position? Any warning signs?
+   - Identify any concerning patterns (e.g., declining shares, increasing volatility, loss of market position)
+   - Provide 2-3 generic, broadly applicable recommendations with caution (e.g., "Consider monitoring competitor activity closely", "May need to review bid strategy if decline continues")
+   - Use cautious language: "might consider", "could indicate need for", "worth monitoring"
+   - Focus on high-level, safe recommendations - avoid specific tactical suggestions
 
-4. **Strategic Recommendations**:
-   - Specific actions to maintain or improve this top-performing position
-   - Areas of concern that need monitoring
-   - Opportunities to further strengthen market position
-
-Keep the analysis data-driven and actionable. Use bullet points for clarity."""
+Keep it compact and analytical. Flag warning signs clearly."""
 
                                                                     # Call OpenAI API for this term
                                                                     openai.api_key = openai_api_key
                                                                     response = openai.chat.completions.create(
                                                                         model="gpt-4o-mini",
                                                                         messages=[
-                                                                            {"role": "system", "content": "You are an expert Amazon PPC analyst specializing in search term performance optimization."},
+                                                                            {"role": "system", "content": "You are an expert Amazon PPC analyst. Be concise and actionable. Avoid verbose explanations."},
                                                                             {"role": "user", "content": prompt}
                                                                         ],
                                                                         temperature=0.7,
-                                                                        max_tokens=1500
+                                                                        max_tokens=900
                                                                     )
                                                                     
                                                                     # Display the analysis
+                                                                    st.markdown("#### 🔍 Performance Analysis")
                                                                     st.markdown(response.choices[0].message.content)
-                                                                    
-                                                                    # Show the raw data in an expander
-                                                                    with st.expander(f"📊 View Raw Time Series Data for '{term_data['search_term']}'"):
-                                                                        df_display = pd.DataFrame({
-                                                                            'Date': term_data['dates'],
-                                                                            'Volume': term_data['volume'],
-                                                                            'Impression Share %': [f"{x:.2f}" for x in term_data['impression_share']],
-                                                                            'Click Share %': [f"{x:.2f}" for x in term_data['click_share']]
-                                                                        })
-                                                                        st.dataframe(df_display, use_container_width=True, hide_index=True)
                                                                     
                                                                     # Add separator between terms
                                                                     if idx < len(all_terms_analysis):
