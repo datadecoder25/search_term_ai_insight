@@ -2445,178 +2445,126 @@ def main():
                                     
                                     return trend_info
                                 
-                                # High performing top rank terms - Already maximized
-                                if 'Category' in impression_share_df.columns:
-                                    top_rank_terms = impression_share_df[
-                                        impression_share_df['Category'] == "High Performing - Top Rank"
-                                    ]
+                                # Initialize session state for API key if not exists
+                                if 'openai_api_key' not in st.session_state:
+                                    st.session_state.openai_api_key = ""
+                                
+                                # API Key input section - appears once at the top
+                                st.markdown("#### ⚙️ OpenAI API Configuration (Optional)")
+                                st.caption("Enter your API key to enable AI-powered analysis for each search term")
+                                
+                                col_api1, col_api2 = st.columns([3, 1])
+                                
+                                with col_api1:
+                                    api_key_input = st.text_input(
+                                        "Enter your OpenAI API Key",
+                                        type="password",
+                                        value=st.session_state.openai_api_key,
+                                        help="Your API key will be stored only for this session. It will be cleared when you close the browser tab.",
+                                        key="openai_api_key_input_top_terms",
+                                        placeholder="sk-..."
+                                    )
                                     
-                                    if not top_rank_terms.empty:
-                                        st.success("✅ **Top Performing Terms** (Already maximized performance):")
-                                        for _, row in top_rank_terms.head(5).iterrows():
-                                            # Format ACR to 2 decimal places
-                                            acr_value = str(row['ACR %']).replace('%', '')
-                                            try:
-                                                acr_formatted = f"{float(acr_value):.2f}%"
-                                            except:
-                                                acr_formatted = row['ACR %']
-                                            
-                                            match_info = get_match_type_info(row)
-                                            intensity_info = get_competitive_intensity_info(row)
-                                            trend_info = get_trend_info(row)
-                                            
-                                            st.write(f"• **{row['Search Term']}** - Rank: {row['Impression Rank']:.1f}, Imp Share: {row['Impression Share %']:.2f}%, ACR: {acr_formatted} vs Baseline: {baseline:.2f}% - Performance maximized{match_info}{intensity_info}{trend_info}")
-                                        
-                                        # GPT-powered Time Series Analysis for Top Performing Terms
-                                        st.markdown("---")
-                                        st.markdown("#### 🤖 AI-Powered Time Series Analysis for Top Performing Terms")
-                                        st.caption("Get detailed GPT analysis of month-over-month trends, fluctuations, and performance patterns")
-                                        
-                                        # Initialize session state for API key if not exists
-                                        if 'openai_api_key' not in st.session_state:
+                                    if api_key_input:
+                                        st.session_state.openai_api_key = api_key_input
+                                
+                                with col_api2:
+                                    if st.session_state.openai_api_key:
+                                        st.write("")
+                                        st.write("")
+                                        if st.button("🗑️ Clear Key", key="clear_api_key_top_terms"):
                                             st.session_state.openai_api_key = ""
+                                            st.rerun()
+                                
+                                st.caption("Don't have an API key? Get one at [OpenAI Platform](https://platform.openai.com/api-keys)")
+                                st.markdown("---")
+                                
+                                openai_api_key = st.session_state.openai_api_key
+                                
+                                # Helper function to analyze a single term with GPT
+                                def analyze_term_with_gpt(term, row_data, sqp_data, openai_api_key, baseline):
+                                    """Analyze a single search term with GPT and display results"""
+                                    if not openai_api_key or sqp_data is None or len(sqp_data) == 0:
+                                        return False
+                                    
+                                    # Check if term has time series data
+                                    if term not in sqp_data['Search Query'].values:
+                                        return False
+                                    
+                                    term_count = len(sqp_data[sqp_data['Search Query'] == term])
+                                    if term_count < 2:
+                                        return False
+                                    
+                                    # Check for required columns
+                                    required_sqp_cols = ['Search Query Volume', 'Impressions: ASIN Share %', 'Clicks: ASIN Share %']
+                                    if not all(col in sqp_data.columns for col in required_sqp_cols):
+                                        return False
+                                    
+                                    try:
+                                        import openai
                                         
-                                        # API Key input - not in expander to keep it visible and preserve state
-                                        st.markdown("##### ⚙️ OpenAI API Configuration")
+                                        # Extract time series data
+                                        term_data = sqp_data[sqp_data['Search Query'] == term].copy()
+                                        term_data = term_data.sort_values('Date')
                                         
-                                        col_api1, col_api2 = st.columns([3, 1])
+                                        time_series = {
+                                            'search_term': term,
+                                            'dates': term_data['Date'].dt.strftime('%Y-%m').tolist(),
+                                            'volume': term_data['Search Query Volume'].tolist(),
+                                            'impression_share': term_data['Impressions: ASIN Share %'].tolist(),
+                                            'click_share': term_data['Clicks: ASIN Share %'].tolist()
+                                        }
                                         
-                                        with col_api1:
-                                            # Use session state to persist the API key
-                                            api_key_input = st.text_input(
-                                                "Enter your OpenAI API Key",
-                                                type="password",
-                                                value=st.session_state.openai_api_key,
-                                                help="Your API key will be stored only for this session. It will be cleared when you close the browser tab.",
-                                                key="openai_api_key_input_top_terms",
-                                                placeholder="sk-..."
-                                            )
+                                        # Create month-over-month changes table
+                                        mom_data = []
+                                        for i in range(1, len(time_series['dates'])):
+                                            prev_idx = i - 1
+                                            curr_idx = i
                                             
-                                            # Update session state
-                                            if api_key_input:
-                                                st.session_state.openai_api_key = api_key_input
+                                            vol_change = time_series['volume'][curr_idx] - time_series['volume'][prev_idx]
+                                            vol_change_pct = (vol_change / time_series['volume'][prev_idx] * 100) if time_series['volume'][prev_idx] != 0 else 0
+                                            
+                                            imp_change = time_series['impression_share'][curr_idx] - time_series['impression_share'][prev_idx]
+                                            imp_change_pct = (imp_change / time_series['impression_share'][prev_idx] * 100) if time_series['impression_share'][prev_idx] != 0 else 0
+                                            
+                                            click_change = time_series['click_share'][curr_idx] - time_series['click_share'][prev_idx]
+                                            click_change_pct = (click_change / time_series['click_share'][prev_idx] * 100) if time_series['click_share'][prev_idx] != 0 else 0
+                                            
+                                            mom_data.append({
+                                                'Period': f"{time_series['dates'][prev_idx]} → {time_series['dates'][curr_idx]}",
+                                                'Volume': f"{time_series['volume'][prev_idx]:,} → {time_series['volume'][curr_idx]:,}",
+                                                'Vol Change': f"{vol_change:+,.0f} ({vol_change_pct:+.1f}%)",
+                                                'Imp Share %': f"{time_series['impression_share'][prev_idx]:.2f}% → {time_series['impression_share'][curr_idx]:.2f}%",
+                                                'Imp Change': f"{imp_change:+.2f}pp ({imp_change_pct:+.1f}%)",
+                                                'Click Share %': f"{time_series['click_share'][prev_idx]:.2f}% → {time_series['click_share'][curr_idx]:.2f}%",
+                                                'Click Change': f"{click_change:+.2f}pp ({click_change_pct:+.1f}%)"
+                                            })
                                         
-                                        with col_api2:
-                                            # Add clear button
-                                            if st.session_state.openai_api_key:
-                                                st.write("")  # Spacing
-                                                st.write("")  # Spacing
-                                                if st.button("🗑️ Clear Key", key="clear_api_key_top_terms"):
-                                                    st.session_state.openai_api_key = ""
-                                                    st.rerun()
+                                        # Display month-over-month table
+                                        with st.expander("📊 Month-over-Month Changes", expanded=True):
+                                            mom_df = pd.DataFrame(mom_data)
+                                            st.dataframe(mom_df, use_container_width=True, hide_index=True)
                                         
-                                        st.caption("Don't have an API key? Get one at [OpenAI Platform](https://platform.openai.com/api-keys)")
+                                        # Calculate metrics for GPT analysis
+                                        vol_start = time_series['volume'][0]
+                                        vol_end = time_series['volume'][-1]
+                                        vol_total_change = vol_end - vol_start
+                                        vol_total_change_pct = (vol_total_change / vol_start * 100) if vol_start != 0 else 0
                                         
-                                        # Use the API key from session state
-                                        openai_api_key = st.session_state.openai_api_key
+                                        imp_start = time_series['impression_share'][0]
+                                        imp_end = time_series['impression_share'][-1]
+                                        imp_total_change = imp_end - imp_start
+                                        imp_total_change_pct = (imp_total_change / imp_start * 100) if imp_start != 0 else 0
                                         
-                                        # Check if we have SQP data and API key
-                                        if openai_api_key and sqp_data is not None and len(sqp_data) > 0:
-                                            if st.button("🚀 Analyze Top Performing Terms with GPT", type="primary", key="analyze_top_terms_gpt"):
-                                                with st.spinner("🤖 Analyzing trends with GPT..."):
-                                                    try:
-                                                        import openai
-                                                        import json
-                                                        
-                                                        # Get top performing search terms
-                                                        top_terms_list = top_rank_terms.head(5)['Search Term'].tolist()
-                                                        
-                                                        # Filter for terms that have time series data in SQP
-                                                        terms_with_data = []
-                                                        for term in top_terms_list:
-                                                            if term in sqp_data['Search Query'].values:
-                                                                term_count = len(sqp_data[sqp_data['Search Query'] == term])
-                                                                if term_count >= 2:  # At least 2 data points
-                                                                    terms_with_data.append(term)
-                                                        
-                                                        if len(terms_with_data) == 0:
-                                                            st.warning("⚠️ No time series data available for top performing terms. Upload Search Query Performance data in Tab 1.")
-                                                        else:
-                                                            # Check if required columns exist in SQP data
-                                                            required_sqp_cols = ['Search Query Volume', 'Impressions: ASIN Share %', 'Clicks: ASIN Share %']
-                                                            missing_sqp_cols = [col for col in required_sqp_cols if col not in sqp_data.columns]
-                                                            
-                                                            if missing_sqp_cols:
-                                                                st.error(f"❌ Missing required columns in SQP data: {', '.join(missing_sqp_cols)}")
-                                                                st.info(f"Available columns: {', '.join(sqp_data.columns.tolist()[:10])}...")
-                                                            else:
-                                                                # Collect time series data for each term
-                                                                all_terms_analysis = []
-                                                                
-                                                                for term in terms_with_data:
-                                                                    term_data = sqp_data[sqp_data['Search Query'] == term].copy()
-                                                                    term_data = term_data.sort_values('Date')
-                                                                    
-                                                                    # Extract time series - use original column names from SQP data
-                                                                    time_series = {
-                                                                        'search_term': term,
-                                                                        'dates': term_data['Date'].dt.strftime('%Y-%m').tolist(),
-                                                                        'volume': term_data['Search Query Volume'].tolist(),
-                                                                        'impression_share': term_data['Impressions: ASIN Share %'].tolist(),
-                                                                        'click_share': term_data['Clicks: ASIN Share %'].tolist()
-                                                                    }
-                                                                    all_terms_analysis.append(time_series)
-                                                                
-                                                                # Analyze each term individually
-                                                                st.success(f"✅ Analyzing {len(terms_with_data)} top performing term(s)")
-                                                                
-                                                                for idx, term_data in enumerate(all_terms_analysis, 1):
-                                                                    st.markdown(f"### 📈 Analysis {idx}: **{term_data['search_term']}**")
-                                                                    
-                                                                    # Create month-over-month changes table
-                                                                    mom_data = []
-                                                                    for i in range(1, len(term_data['dates'])):
-                                                                        prev_idx = i - 1
-                                                                        curr_idx = i
-                                                                        
-                                                                        # Volume changes
-                                                                        vol_change = term_data['volume'][curr_idx] - term_data['volume'][prev_idx]
-                                                                        vol_change_pct = (vol_change / term_data['volume'][prev_idx] * 100) if term_data['volume'][prev_idx] != 0 else 0
-                                                                        
-                                                                        # Impression Share changes
-                                                                        imp_change = term_data['impression_share'][curr_idx] - term_data['impression_share'][prev_idx]
-                                                                        imp_change_pct = (imp_change / term_data['impression_share'][prev_idx] * 100) if term_data['impression_share'][prev_idx] != 0 else 0
-                                                                        
-                                                                        # Click Share changes
-                                                                        click_change = term_data['click_share'][curr_idx] - term_data['click_share'][prev_idx]
-                                                                        click_change_pct = (click_change / term_data['click_share'][prev_idx] * 100) if term_data['click_share'][prev_idx] != 0 else 0
-                                                                        
-                                                                        mom_data.append({
-                                                                            'Period': f"{term_data['dates'][prev_idx]} → {term_data['dates'][curr_idx]}",
-                                                                            'Volume': f"{term_data['volume'][prev_idx]:,} → {term_data['volume'][curr_idx]:,}",
-                                                                            'Vol Change': f"{vol_change:+,.0f} ({vol_change_pct:+.1f}%)",
-                                                                            'Imp Share %': f"{term_data['impression_share'][prev_idx]:.2f}% → {term_data['impression_share'][curr_idx]:.2f}%",
-                                                                            'Imp Change': f"{imp_change:+.2f}pp ({imp_change_pct:+.1f}%)",
-                                                                            'Click Share %': f"{term_data['click_share'][prev_idx]:.2f}% → {term_data['click_share'][curr_idx]:.2f}%",
-                                                                            'Click Change': f"{click_change:+.2f}pp ({click_change_pct:+.1f}%)"
-                                                                        })
-                                                                    
-                                                                    # Display month-over-month table
-                                                                    st.markdown("#### 📊 Month-over-Month Changes")
-                                                                    mom_df = pd.DataFrame(mom_data)
-                                                                    st.dataframe(mom_df, use_container_width=True, hide_index=True)
-                                                                    
-                                                                    # Prepare summary data for GPT (without showing raw numbers in prompt)
-                                                                    # Calculate metrics for analysis
-                                                                    vol_start = term_data['volume'][0]
-                                                                    vol_end = term_data['volume'][-1]
-                                                                    vol_total_change = vol_end - vol_start
-                                                                    vol_total_change_pct = (vol_total_change / vol_start * 100) if vol_start != 0 else 0
-                                                                    
-                                                                    imp_start = term_data['impression_share'][0]
-                                                                    imp_end = term_data['impression_share'][-1]
-                                                                    imp_total_change = imp_end - imp_start
-                                                                    imp_total_change_pct = (imp_total_change / imp_start * 100) if imp_start != 0 else 0
-                                                                    
-                                                                    click_start = term_data['click_share'][0]
-                                                                    click_end = term_data['click_share'][-1]
-                                                                    click_total_change = click_end - click_start
-                                                                    click_total_change_pct = (click_total_change / click_start * 100) if click_start != 0 else 0
-                                                                    
-                                                                    # Build summary for GPT
-                                                                    summary = f"""
-Search Term: {term_data['search_term']}
-Time Period: {term_data['dates'][0]} to {term_data['dates'][-1]} ({len(term_data['dates'])} months)
+                                        click_start = time_series['click_share'][0]
+                                        click_end = time_series['click_share'][-1]
+                                        click_total_change = click_end - click_start
+                                        click_total_change_pct = (click_total_change / click_start * 100) if click_start != 0 else 0
+                                        
+                                        # Build summary for GPT
+                                        summary = f"""
+Search Term: {time_series['search_term']}
+Time Period: {time_series['dates'][0]} to {time_series['dates'][-1]} ({len(time_series['dates'])} months)
 
 Overall Changes:
 - Volume: {vol_start:,} → {vol_end:,} ({vol_total_change:+,} units, {vol_total_change_pct:+.1f}%)
@@ -2624,11 +2572,10 @@ Overall Changes:
 - Click Share: {click_start:.2f}% → {click_end:.2f}% ({click_total_change:+.2f}pp, {click_total_change_pct:+.1f}%)
 
 Month-by-Month Data:
-{chr(10).join([f"{term_data['dates'][i]}: Vol={term_data['volume'][i]:,}, Imp={term_data['impression_share'][i]:.2f}%, Click={term_data['click_share'][i]:.2f}%" for i in range(len(term_data['dates']))])}
+{chr(10).join([f"{time_series['dates'][i]}: Vol={time_series['volume'][i]:,}, Imp={time_series['impression_share'][i]:.2f}%, Click={time_series['click_share'][i]:.2f}%" for i in range(len(time_series['dates']))])}
 """
-                                                                    
-                                                                    # Create detailed prompt for this term
-                                                                    prompt = f"""You are an Amazon PPC expert. Analyze this top-performing search term's performance data and provide a concise analysis.
+                                        
+                                        prompt = f"""You are an Amazon PPC expert. Analyze this search term's performance data and provide a concise analysis.
 
 {summary}
 
@@ -2654,45 +2601,82 @@ Provide a brief, actionable analysis (max 350 words):
    - Focus on high-level, safe recommendations - avoid specific tactical suggestions
 
 Keep it compact and analytical. Flag warning signs clearly."""
-
-                                                                    # Call OpenAI API for this term
-                                                                    openai.api_key = openai_api_key
-                                                                    response = openai.chat.completions.create(
-                                                                        model="gpt-4o-mini",
-                                                                        messages=[
-                                                                            {"role": "system", "content": "You are an expert Amazon PPC analyst. Be concise and actionable. Avoid verbose explanations."},
-                                                                            {"role": "user", "content": prompt}
-                                                                        ],
-                                                                        temperature=0.7,
-                                                                        max_tokens=900
-                                                                    )
-                                                                    
-                                                                    # Display the analysis
-                                                                    st.markdown("#### 🔍 Performance Analysis")
-                                                                    st.markdown(response.choices[0].message.content)
-                                                                    
-                                                                    # Add separator between terms
-                                                                    if idx < len(all_terms_analysis):
-                                                                        st.markdown("---")
-                                                                
-                                                                st.success("✅ All analyses complete!")
-                                                    
-                                                    except ImportError:
-                                                        st.error("❌ OpenAI package not installed. Please run: `pip install openai`")
-                                                        st.code("pip install openai", language="bash")
-                                                    except Exception as e:
-                                                        if "invalid_api_key" in str(e).lower() or "incorrect api key" in str(e).lower():
-                                                            st.error("❌ Invalid API key. Please check your OpenAI API key and try again.")
-                                                        elif "insufficient_quota" in str(e).lower():
-                                                            st.error("❌ Insufficient quota. Please check your OpenAI account balance.")
-                                                        else:
-                                                            st.error(f"❌ Error analyzing with GPT: {str(e)}")
-                                                            st.caption("Please check your API key and internet connection.")
                                         
-                                        elif not openai_api_key:
-                                            st.info("💡 Enter your OpenAI API key above to enable AI-powered trend analysis for top performing terms")
-                                        elif sqp_data is None or len(sqp_data) == 0:
-                                            st.warning("⚠️ No Search Query Performance data available. Upload SQP data in Tab 1 to enable this feature.")
+                                        # Call OpenAI API
+                                        openai.api_key = openai_api_key
+                                        response = openai.chat.completions.create(
+                                            model="gpt-4o-mini",
+                                            messages=[
+                                                {"role": "system", "content": "You are an expert Amazon PPC analyst. Be concise and actionable. Avoid verbose explanations."},
+                                                {"role": "user", "content": prompt}
+                                            ],
+                                            temperature=0.7,
+                                            max_tokens=900
+                                        )
+                                        
+                                        # Display the analysis
+                                        st.markdown("**🤖 AI-Powered Performance Analysis:**")
+                                        st.markdown(response.choices[0].message.content)
+                                        return True
+                                        
+                                    except Exception as e:
+                                        if "invalid_api_key" in str(e).lower() or "incorrect api key" in str(e).lower():
+                                            st.error("❌ Invalid API key. Please check your OpenAI API key and try again.")
+                                        elif "insufficient_quota" in str(e).lower():
+                                            st.error("❌ Insufficient quota. Please check your OpenAI account balance.")
+                                        else:
+                                            st.error(f"❌ Error analyzing with GPT: {str(e)}")
+                                        return False
+                                
+                                # High performing top rank terms - Already maximized
+                                if 'Category' in impression_share_df.columns:
+                                    top_rank_terms = impression_share_df[
+                                        impression_share_df['Category'] == "High Performing - Top Rank"
+                                    ]
+                                    
+                                    if not top_rank_terms.empty:
+                                        st.success(f"✅ **Top Performing Terms** ({len(top_rank_terms)} terms - Already maximized performance)")
+                                        
+                                        for idx, (_, row) in enumerate(top_rank_terms.head(5).iterrows(), 1):
+                                            st.markdown(f"### 📊 Search Term {idx}: **{row['Search Term']}**")
+                                            
+                                            # Format ACR to 2 decimal places
+                                            acr_value = str(row['ACR %']).replace('%', '')
+                                            try:
+                                                acr_formatted = f"{float(acr_value):.2f}%"
+                                            except:
+                                                acr_formatted = row['ACR %']
+                                            
+                                            match_info = get_match_type_info(row)
+                                            intensity_info = get_competitive_intensity_info(row)
+                                            trend_info = get_trend_info(row)
+                                            
+                                            # Display key metrics
+                                            col1, col2, col3, col4 = st.columns(4)
+                                            with col1:
+                                                st.metric("Impression Rank", f"{row['Impression Rank']:.1f}")
+                                            with col2:
+                                                st.metric("Impression Share", f"{row['Impression Share %']:.2f}%")
+                                            with col3:
+                                                st.metric("ACR", acr_formatted)
+                                            with col4:
+                                                st.metric("vs Baseline", f"{baseline:.2f}%")
+                                            
+                                            # Display match type and other info
+                                            st.caption(f"**Details:** Performance maximized{match_info}{intensity_info}{trend_info}")
+                                            
+                                            # GPT Analysis for this specific term
+                                            if openai_api_key and sqp_data is not None:
+                                                with st.spinner(f"🤖 Analyzing '{row['Search Term']}' with GPT..."):
+                                                    analyzed = analyze_term_with_gpt(row['Search Term'], row, sqp_data, openai_api_key, baseline)
+                                                    if not analyzed:
+                                                        st.info("💡 No time series data available for GPT analysis")
+                                            elif not openai_api_key:
+                                                st.info("💡 Enter OpenAI API key above to enable AI-powered analysis")
+                                            
+                                            # Add separator between terms
+                                            if idx < len(top_rank_terms.head(5)):
+                                                st.markdown("---")
                                         
                                         st.markdown("---")
                                 
@@ -2702,8 +2686,11 @@ Keep it compact and analytical. Flag warning signs clearly."""
                                 ]
                                 
                                 if not high_opportunity.empty:
-                                    st.success("🚀 **High Opportunity Terms** (High ACR but poor impression rank):")
-                                    for _, row in high_opportunity.head(5).iterrows():
+                                    st.success(f"🚀 **High Opportunity Terms** ({len(high_opportunity)} terms - High ACR but poor impression rank)")
+                                    
+                                    for idx, (_, row) in enumerate(high_opportunity.head(5).iterrows(), 1):
+                                        st.markdown(f"### 📊 Search Term {idx}: **{row['Search Term']}**")
+                                        
                                         # Format ACR to 2 decimal places
                                         acr_value = str(row['ACR %']).replace('%', '')
                                         try:
@@ -2715,7 +2702,35 @@ Keep it compact and analytical. Flag warning signs clearly."""
                                         intensity_info = get_competitive_intensity_info(row)
                                         trend_info = get_trend_info(row)
                                         
-                                        st.write(f"• **{row['Search Term']}** - Rank: {row['Impression Rank']:.1f}, Imp Share: {row['Impression Share %']:.2f}%, ACR: {acr_formatted} - {row['Recommendations']}{match_info}{intensity_info}{trend_info}")
+                                        # Display key metrics
+                                        col1, col2, col3, col4 = st.columns(4)
+                                        with col1:
+                                            st.metric("Impression Rank", f"{row['Impression Rank']:.1f}")
+                                        with col2:
+                                            st.metric("Impression Share", f"{row['Impression Share %']:.2f}%")
+                                        with col3:
+                                            st.metric("ACR", acr_formatted)
+                                        with col4:
+                                            st.metric("Orders", f"{row['Orders']:.0f}")
+                                        
+                                        # Display match type and recommendations
+                                        st.caption(f"**Action:** {row['Recommendations']}")
+                                        st.caption(f"**Details:**{match_info}{intensity_info}{trend_info}")
+                                        
+                                        # GPT Analysis for this specific term
+                                        if openai_api_key and sqp_data is not None:
+                                            with st.spinner(f"🤖 Analyzing '{row['Search Term']}' with GPT..."):
+                                                analyzed = analyze_term_with_gpt(row['Search Term'], row, sqp_data, openai_api_key, baseline)
+                                                if not analyzed:
+                                                    st.info("💡 No time series data available for GPT analysis")
+                                        elif not openai_api_key:
+                                            st.info("💡 Enter OpenAI API key above to enable AI-powered analysis")
+                                        
+                                        # Add separator between terms
+                                        if idx < len(high_opportunity.head(5)):
+                                            st.markdown("---")
+                                    
+                                    st.markdown("---")
                                 
                                 # Promising terms to scale
                                 promising_terms = impression_share_df[
@@ -2723,8 +2738,11 @@ Keep it compact and analytical. Flag warning signs clearly."""
                                 ]
                                 
                                 if not promising_terms.empty:
-                                    st.info("📈 **Promising Terms to Scale** (75%+ of baseline performance):")
-                                    for _, row in promising_terms.head(5).iterrows():
+                                    st.info(f"📈 **Promising Terms to Scale** ({len(promising_terms)} terms - 75%+ of baseline performance)")
+                                    
+                                    for idx, (_, row) in enumerate(promising_terms.head(5).iterrows(), 1):
+                                        st.markdown(f"### 📊 Search Term {idx}: **{row['Search Term']}**")
+                                        
                                         # Format ACR to 2 decimal places
                                         acr_value = str(row['ACR %']).replace('%', '')
                                         try:
@@ -2736,7 +2754,35 @@ Keep it compact and analytical. Flag warning signs clearly."""
                                         intensity_info = get_competitive_intensity_info(row)
                                         trend_info = get_trend_info(row)
                                         
-                                        st.write(f"• **{row['Search Term']}** - Rank: {row['Impression Rank']:.1f}, Imp Share: {row['Impression Share %']:.2f}%, ACR: {acr_formatted} vs Baseline: {baseline:.2f}% - {row['Recommendations']}{match_info}{intensity_info}{trend_info}")
+                                        # Display key metrics
+                                        col1, col2, col3, col4 = st.columns(4)
+                                        with col1:
+                                            st.metric("Impression Rank", f"{row['Impression Rank']:.1f}")
+                                        with col2:
+                                            st.metric("Impression Share", f"{row['Impression Share %']:.2f}%")
+                                        with col3:
+                                            st.metric("ACR", acr_formatted)
+                                        with col4:
+                                            st.metric("vs Baseline", f"{baseline:.2f}%")
+                                        
+                                        # Display match type and recommendations
+                                        st.caption(f"**Action:** {row['Recommendations']}")
+                                        st.caption(f"**Details:**{match_info}{intensity_info}{trend_info}")
+                                        
+                                        # GPT Analysis for this specific term
+                                        if openai_api_key and sqp_data is not None:
+                                            with st.spinner(f"🤖 Analyzing '{row['Search Term']}' with GPT..."):
+                                                analyzed = analyze_term_with_gpt(row['Search Term'], row, sqp_data, openai_api_key, baseline)
+                                                if not analyzed:
+                                                    st.info("💡 No time series data available for GPT analysis")
+                                        elif not openai_api_key:
+                                            st.info("💡 Enter OpenAI API key above to enable AI-powered analysis")
+                                        
+                                        # Add separator between terms
+                                        if idx < len(promising_terms.head(5)):
+                                            st.markdown("---")
+                                    
+                                    st.markdown("---")
                                 
                                 # Gray Zone terms - Scenario B
                                 gray_zone_terms = impression_share_df[
@@ -2744,8 +2790,11 @@ Keep it compact and analytical. Flag warning signs clearly."""
                                 ]
                                 
                                 if not gray_zone_terms.empty:
-                                    st.warning("⚠️ **Gray Zone Terms** (25%+ below baseline - expensive to scale):")
-                                    for _, row in gray_zone_terms.head(5).iterrows():
+                                    st.warning(f"⚠️ **Gray Zone Terms** ({len(gray_zone_terms)} terms - 25%+ below baseline - expensive to scale)")
+                                    
+                                    for idx, (_, row) in enumerate(gray_zone_terms.head(5).iterrows(), 1):
+                                        st.markdown(f"### 📊 Search Term {idx}: **{row['Search Term']}**")
+                                        
                                         # Format ACR to 2 decimal places
                                         acr_value = str(row['ACR %']).replace('%', '')
                                         try:
@@ -2757,7 +2806,35 @@ Keep it compact and analytical. Flag warning signs clearly."""
                                         intensity_info = get_competitive_intensity_info(row)
                                         trend_info = get_trend_info(row)
                                         
-                                        st.write(f"• **{row['Search Term']}** - Rank: {row['Impression Rank']:.1f}, Imp Share: {row['Impression Share %']:.2f}%, ACR: {acr_formatted} vs Baseline: {baseline:.2f}% - {row['Recommendations']}{match_info}{intensity_info}{trend_info}")
+                                        # Display key metrics
+                                        col1, col2, col3, col4 = st.columns(4)
+                                        with col1:
+                                            st.metric("Impression Rank", f"{row['Impression Rank']:.1f}")
+                                        with col2:
+                                            st.metric("Impression Share", f"{row['Impression Share %']:.2f}%")
+                                        with col3:
+                                            st.metric("ACR", acr_formatted)
+                                        with col4:
+                                            st.metric("vs Baseline", f"{baseline:.2f}%")
+                                        
+                                        # Display match type and recommendations
+                                        st.caption(f"**Action:** {row['Recommendations']}")
+                                        st.caption(f"**Details:**{match_info}{intensity_info}{trend_info}")
+                                        
+                                        # GPT Analysis for this specific term
+                                        if openai_api_key and sqp_data is not None:
+                                            with st.spinner(f"🤖 Analyzing '{row['Search Term']}' with GPT..."):
+                                                analyzed = analyze_term_with_gpt(row['Search Term'], row, sqp_data, openai_api_key, baseline)
+                                                if not analyzed:
+                                                    st.info("💡 No time series data available for GPT analysis")
+                                        elif not openai_api_key:
+                                            st.info("💡 Enter OpenAI API key above to enable AI-powered analysis")
+                                        
+                                        # Add separator between terms
+                                        if idx < len(gray_zone_terms.head(5)):
+                                            st.markdown("---")
+                                    
+                                    st.markdown("---")
                                 
                                 # New Section: Low Order Search Queries Analysis (< 3 orders)
                                 st.markdown("---")
