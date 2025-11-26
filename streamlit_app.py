@@ -1808,49 +1808,111 @@ def main():
                 # Create and display plots
                 st.subheader("📊 Interactive Visualizations")
                 
-                plots = create_interactive_plots(filtered_df)
+                # Add Top K Products Selection
+                st.markdown("---")
+                col_viz1, col_viz2 = st.columns([2, 1])
                 
-                # Display plots in sub-tabs
-                plot_tab_names = [plot[0] for plot in plots]
-                plot_tabs = st.tabs(plot_tab_names)
+                with col_viz1:
+                    st.markdown("### 🏆 Top Search Queries by Volume")
+                    st.caption("Analyze multiple search queries based on their average search volume")
                 
-                for i, (plot_tab, (plot_name, fig)) in enumerate(zip(plot_tabs, plots)):
-                    with plot_tab:
-                        st.plotly_chart(fig, use_container_width=True)
+                with col_viz2:
+                    # Calculate average search volume for each search query
+                    avg_volumes = full_df.groupby('Search Query')['Search Query Volume'].mean().sort_values(ascending=False)
+                    
+                    # Top K selector
+                    max_products = min(20, len(avg_volumes))
+                    top_k = st.slider(
+                        "Select number of top queries:",
+                        min_value=1,
+                        max_value=max_products,
+                        value=min(5, max_products),
+                        help="Select how many top search queries to display based on average search volume"
+                    )
                 
-                # Display the raw data table
-                st.subheader("📋 Search Term Data Table")
+                # Get top K products
+                top_products = avg_volumes.head(top_k).index.tolist()
                 
-                st.dataframe(
-                    filtered_df,
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={
-                        "Date": st.column_config.DateColumn("Date", format="YYYY-MM-DD"),
-                        "Search Query Score": st.column_config.NumberColumn("Score", format="%.2f"),
-                        "Search Query Volume": st.column_config.NumberColumn("Volume", format="%d"),
-                        "Total Purchase Count": st.column_config.NumberColumn("Purchases", format="%d"),
-                        "Brand Impressions Share": st.column_config.NumberColumn("Impression Share %", format="%.2f"),
-                        "Click Rate": st.column_config.NumberColumn("Click Rate %", format="%.2f"),
-                        "Brand Click Share": st.column_config.NumberColumn("Click Share %", format="%.2f"),
-                        "Cart Add Rate": st.column_config.NumberColumn("Cart Add Rate %", format="%.2f"),
-                        "Brand Cart Adds Share": st.column_config.NumberColumn("Cart Add Share %", format="%.2f"),
-                        "Purchase Rate": st.column_config.NumberColumn("Purchase Rate %", format="%.2f"),
-                        "Brand Purchase Share": st.column_config.NumberColumn("Purchase Share %", format="%.2f")
-                    }
-                )
+                st.success(f"📈 Displaying top {top_k} search queries by average search volume")
                 
-                # Download button for the data
-                csv_data = filtered_df.to_csv(index=False)
-                st.download_button(
-                    label="📥 Download Data as CSV",
-                    data=csv_data,
-                    file_name=f"search_term_data_{selected_query.replace(' ', '_')}.csv",
-                    mime="text/csv",
-                    key="download_search_term_data"
-                )
-                
-                st.caption(f"📊 Showing {len(filtered_df)} data points for '{selected_query}'")
+                # Display each product's visualization
+                for idx, query in enumerate(top_products, 1):
+                    st.markdown(f"## {idx}. **{query}**")
+                    
+                    # Filter data for this specific query
+                    query_filtered_df = full_df[full_df['Search Query'] == query].reset_index(drop=True)
+                    query_filtered_df = query_filtered_df.sort_values(by='Date', ascending=True)
+                    
+                    # Select and rename columns for display
+                    query_display_df = query_filtered_df[required_columns].copy()
+                    query_display_df.columns = display_columns
+                    
+                    # Show key metrics
+                    metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
+                    
+                    with metric_col1:
+                        avg_volume = query_display_df['Search Query Volume'].mean()
+                        st.metric("Avg Search Volume", f"{avg_volume:,.0f}")
+                    
+                    with metric_col2:
+                        avg_purchases = query_display_df['Total Purchase Count'].mean()
+                        st.metric("Avg Purchases", f"{avg_purchases:.1f}")
+                    
+                    with metric_col3:
+                        avg_imp_share = query_display_df['Brand Impressions Share'].mean()
+                        st.metric("Avg Impression Share", f"{avg_imp_share:.2f}%")
+                    
+                    with metric_col4:
+                        avg_purchase_share = query_display_df['Brand Purchase Share'].mean()
+                        st.metric("Avg Purchase Share", f"{avg_purchase_share:.2f}%")
+                    
+                    # Create plots for this query
+                    plots = create_interactive_plots(query_display_df)
+                    
+                    # Display plots in sub-tabs
+                    plot_tab_names = [plot[0] for plot in plots]
+                    plot_tabs = st.tabs(plot_tab_names)
+                    
+                    for i, (plot_tab, (plot_name, fig)) in enumerate(zip(plot_tabs, plots)):
+                        with plot_tab:
+                            st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Display the raw data table in a collapsible expander
+                    with st.expander(f"📋 View Data Table for '{query}'", expanded=False):
+                        st.dataframe(
+                            query_display_df,
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config={
+                                "Date": st.column_config.DateColumn("Date", format="YYYY-MM-DD"),
+                                "Search Query Score": st.column_config.NumberColumn("Score", format="%.2f"),
+                                "Search Query Volume": st.column_config.NumberColumn("Volume", format="%d"),
+                                "Total Purchase Count": st.column_config.NumberColumn("Purchases", format="%d"),
+                                "Brand Impressions Share": st.column_config.NumberColumn("Impression Share %", format="%.2f"),
+                                "Click Rate": st.column_config.NumberColumn("Click Rate %", format="%.2f"),
+                                "Brand Click Share": st.column_config.NumberColumn("Click Share %", format="%.2f"),
+                                "Cart Add Rate": st.column_config.NumberColumn("Cart Add Rate %", format="%.2f"),
+                                "Brand Cart Adds Share": st.column_config.NumberColumn("Cart Add Share %", format="%.2f"),
+                                "Purchase Rate": st.column_config.NumberColumn("Purchase Rate %", format="%.2f"),
+                                "Brand Purchase Share": st.column_config.NumberColumn("Purchase Share %", format="%.2f")
+                            }
+                        )
+                        
+                        # Download button for this query's data
+                        csv_data_query = query_display_df.to_csv(index=False)
+                        st.download_button(
+                            label=f"📥 Download Data for '{query}'",
+                            data=csv_data_query,
+                            file_name=f"search_term_data_{query.replace(' ', '_')}.csv",
+                            mime="text/csv",
+                            key=f"download_{idx}_{query.replace(' ', '_')}"
+                        )
+                        
+                        st.caption(f"📊 Showing {len(query_display_df)} data points for '{query}'")
+                    
+                    # Add separator between products (except for the last one)
+                    if idx < len(top_products):
+                        st.markdown("---")
         else:
             st.info("👆 Please upload CSV files and click 'Process Uploaded Files' to begin analysis.")
     
@@ -2705,7 +2767,7 @@ Keep it compact and analytical. Flag warning signs clearly."""
                                     if not top_rank_terms.empty:
                                         st.success(f"✅ **Top Performing Terms** ({len(top_rank_terms)} terms - Already maximized performance)")
                                         
-                                        for idx, (_, row) in enumerate(top_rank_terms.head(5).iterrows(), 1):
+                                        for idx, (_, row) in enumerate(top_rank_terms.iterrows(), 1):
                                             st.markdown(f"### 📊 Search Term {idx}: **{row['Search Term']}**")
                                             
                                             # Format ACR to 2 decimal places
@@ -2756,7 +2818,7 @@ Keep it compact and analytical. Flag warning signs clearly."""
                                 if not high_opportunity.empty:
                                     st.success(f"🚀 **High Opportunity Terms** ({len(high_opportunity)} terms - High ACR but poor impression rank)")
                                     
-                                    for idx, (_, row) in enumerate(high_opportunity.head(5).iterrows(), 1):
+                                    for idx, (_, row) in enumerate(high_opportunity.iterrows(), 1):
                                         st.markdown(f"### 📊 Search Term {idx}: **{row['Search Term']}**")
                                         
                                         # Format ACR to 2 decimal places
@@ -2808,7 +2870,7 @@ Keep it compact and analytical. Flag warning signs clearly."""
                                 if not promising_terms.empty:
                                     st.info(f"📈 **Promising Terms to Scale** ({len(promising_terms)} terms - 75%+ of baseline performance)")
                                     
-                                    for idx, (_, row) in enumerate(promising_terms.head(5).iterrows(), 1):
+                                    for idx, (_, row) in enumerate(promising_terms.iterrows(), 1):
                                         st.markdown(f"### 📊 Search Term {idx}: **{row['Search Term']}**")
                                         
                                         # Format ACR to 2 decimal places
@@ -2860,7 +2922,7 @@ Keep it compact and analytical. Flag warning signs clearly."""
                                 if not gray_zone_terms.empty:
                                     st.warning(f"⚠️ **Gray Zone Terms** ({len(gray_zone_terms)} terms - 25%+ below baseline - expensive to scale)")
                                     
-                                    for idx, (_, row) in enumerate(gray_zone_terms.head(5).iterrows(), 1):
+                                    for idx, (_, row) in enumerate(gray_zone_terms.iterrows(), 1):
                                         st.markdown(f"### 📊 Search Term {idx}: **{row['Search Term']}**")
                                         
                                         # Format ACR to 2 decimal places
