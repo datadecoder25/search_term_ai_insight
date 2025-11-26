@@ -109,6 +109,12 @@ def fill_missing_dates(data: pd.DataFrame, date_column: str, freq: str) -> pd.Da
     """
     Fills missing dates in a time series DataFrame for each unique product,
     with a frequency of 'ME' (monthly) or 'W' (weekly).
+    
+    For weekly data: Normalizes dates to week periods regardless of which day of the week
+    the data falls on. All dates in the same week are grouped together and represented
+    by the week start date (Monday).
+    
+    For monthly data: Normalizes to month-end dates.
     """
     # Validate the frequency input
     if freq not in ['ME', 'W']:
@@ -118,14 +124,41 @@ def fill_missing_dates(data: pd.DataFrame, date_column: str, freq: str) -> pd.Da
     # Ensure the 'Date' column is in the correct format
     data['Date'] = pd.to_datetime(data['Date'])
 
-    start_date = data['Date'].min()
-    end_date = data['Date'].max()
+    if freq == 'W':
+        # For weekly data: Normalize all dates to the start of their week (Monday)
+        # This handles cases where different products have data on different days of the week
+        data['Week_Period'] = data['Date'].dt.to_period('W-SUN')  # Week ending on Sunday
+        data['Date'] = data['Week_Period'].dt.start_time  # Convert to Monday (week start)
+        data = data.drop(columns=['Week_Period'])
+        
+        # Group by Date and Search Query, aggregating numeric columns
+        # This combines data that falls in the same week for the same search query
+        numeric_cols = data.select_dtypes(include=[np.number]).columns.tolist()
+        non_numeric_cols = ['Date', 'Search Query']
+        
+        if len(numeric_cols) > 0:
+            # Aggregate by taking the sum for numeric columns (since we're grouping by week)
+            agg_dict = {col: 'sum' for col in numeric_cols}
+            data = data.groupby(['Date', 'Search Query'], as_index=False).agg(agg_dict)
+    
+    elif freq == 'ME':
+        # For monthly data: Normalize to month-end
+        data['Month_Period'] = data['Date'].dt.to_period('M')
+        data['Date'] = data['Month_Period'].dt.end_time  # Convert to month-end
+        data = data.drop(columns=['Month_Period'])
+        
+        # Group by Date and Search Query, aggregating numeric columns
+        numeric_cols = data.select_dtypes(include=[np.number]).columns.tolist()
+        
+        if len(numeric_cols) > 0:
+            agg_dict = {col: 'sum' for col in numeric_cols}
+            data = data.groupby(['Date', 'Search Query'], as_index=False).agg(agg_dict)
 
+    # Get all unique dates that exist after normalization
+    unique_dates = sorted(data['Date'].unique())
+    
     # Get a list of all unique products
     products = data['Search Query'].unique()
-
-    # Generate a complete date range based on the specified frequency
-    full_date_range = pd.date_range(start=start_date, end=end_date, freq=freq)
 
     # Create an empty list to store the processed data for each product
     filled_data_list = []
@@ -134,14 +167,14 @@ def fill_missing_dates(data: pd.DataFrame, date_column: str, freq: str) -> pd.Da
     for product in products:
         # Filter the original data for the current product
         product_data = data[data['Search Query'] == product].copy()
-
-        # Create a DataFrame with the full date range for this product
+        
+        # Create a DataFrame with all unique dates from the dataset
         full_product_df = pd.DataFrame({
-            'Date': full_date_range,
+            'Date': unique_dates,
             'Search Query': product
         })
 
-        # Merge the full date range with the product's data
+        # Merge with the product's actual data
         merged_df = pd.merge(full_product_df, product_data, on=['Date', 'Search Query'], how='left')
 
         # Append the merged DataFrame to our list
@@ -1499,6 +1532,8 @@ def main():
             st.caption("• All CSV files will be automatically loaded and combined")
             st.caption("• Make sure all CSV files have the same structure")
             st.caption("• Files should contain 'Search Query', 'Reporting Date' columns")
+            st.caption("• **For trend analysis**: Upload files for multiple time periods (e.g., Week 1, Week 2, Week 3, etc.)")
+            st.caption("• Single file = single time period = no trends. Multiple files = time series = trend analysis! 📈")
         
         with col2:
             st.subheader("Analysis Settings")
@@ -1532,9 +1567,23 @@ def main():
         
                 
                 if combined_df is not None:
+                    # Show the actual dates found in the data
+                    original_dates = pd.to_datetime(combined_df['Reporting Date']).dt.strftime('%Y-%m-%d').unique()
+                    st.info(f"📅 **Original dates found in uploaded files:** {len(original_dates)} unique date(s)")
+                    st.caption(f"Raw dates: {', '.join(sorted(original_dates))}")
+                    
                     # Process data
-                    with st.spinner("Processing data and filling missing dates..."):
+                    with st.spinner(f"Processing data and normalizing to {freq_option.lower()} periods..."):
                         full_df = fill_missing_dates(combined_df, 'Reporting Date', freq).fillna(0)
+                    
+                    # Show normalized dates
+                    if freq == 'W':
+                        st.success(f"✅ Normalized to **{full_df['Date'].nunique()} week(s)** (starting Mondays)")
+                    else:
+                        st.success(f"✅ Normalized to **{full_df['Date'].nunique()} month(s)** (month-end dates)")
+                    
+                    normalized_dates = full_df['Date'].dt.strftime('%Y-%m-%d').unique()
+                    st.caption(f"Normalized dates: {', '.join(sorted(normalized_dates))}")
                     
                     # Store in session state
                     st.session_state.tab1_full_df = full_df
@@ -1548,7 +1597,7 @@ def main():
             
             # Data summary in columns
             st.subheader("📈 Data Summary")
-            col1, col2, col3, col4 = st.columns(4)
+            col1, col2, col3, col4, col5 = st.columns(5)
             
             with col1:
                 st.metric("Total Records", len(full_df))
@@ -1558,6 +1607,15 @@ def main():
                 st.metric("Date Range Start", full_df['Date'].min().strftime('%Y-%m-%d'))
             with col4:
                 st.metric("Date Range End", full_df['Date'].max().strftime('%Y-%m-%d'))
+            with col5:
+                # Count unique dates to show number of time periods
+                unique_dates = full_df['Date'].nunique()
+                st.metric("Time Periods", unique_dates)
+            
+            # Show warning if only one time period (insufficient for trend analysis)
+            if full_df['Date'].nunique() == 1:
+                st.warning("⚠️ **Single Time Period Detected**: You've uploaded data for only one time period. Trend analysis requires at least 2 time periods. Please upload multiple CSV files (e.g., multiple weeks or months) to enable trend analysis.")
+                st.info(f"💡 **Tip for {stored_freq_option} Data**: Upload CSV files for at least 2 different {stored_freq_option.lower()} periods. For example, if you selected 'Weekly', upload files for Week 1, Week 2, Week 3, etc.")
             
             # Search query selection
             st.subheader("🎯 Search Query Filter")
@@ -1735,7 +1793,17 @@ def main():
                     
                     st.markdown("---")
                 else:
-                    st.warning("⚠️ Insufficient data for trend analysis. Need at least 2 data points with non-zero search volume.")
+                    st.warning("⚠️ **Insufficient data for trend analysis**")
+                    st.info(f"""
+                    **Why am I seeing this?**
+                    - Trend analysis requires at least 2 time periods with non-zero search volume for '{selected_query}'
+                    - Currently, there is only 1 data point or all search volumes are zero
+                    
+                    **How to fix this:**
+                    - Upload CSV files for **multiple {stored_freq_option.lower()} periods** (e.g., Week 1, Week 2, Week 3, etc.)
+                    - Ensure the search query '{selected_query}' has non-zero volume in at least 2 periods
+                    - Use the file uploader above to add more CSV files, then click 'Process Uploaded Files' again
+                    """)
                 
                 # Create and display plots
                 st.subheader("📊 Interactive Visualizations")
