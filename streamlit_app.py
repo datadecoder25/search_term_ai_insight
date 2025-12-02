@@ -1875,7 +1875,7 @@ def main():
                     
                     for i, (plot_tab, (plot_name, fig)) in enumerate(zip(plot_tabs, plots)):
                         with plot_tab:
-                            st.plotly_chart(fig, use_container_width=True)
+                            st.plotly_chart(fig, use_container_width=True, key=f"plotly_chart_{idx}_{i}")
                     
                     # Display the raw data table in a collapsible expander
                     with st.expander(f"📋 View Data Table for '{query}'", expanded=False):
