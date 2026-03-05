@@ -122,7 +122,7 @@ def fill_missing_dates(data: pd.DataFrame, date_column: str, freq: str) -> pd.Da
 
     data = data.rename(columns={'Reporting Date': 'Date'})
     # Ensure the 'Date' column is in the correct format
-    data['Date'] = pd.to_datetime(data['Date'])
+    data['Date'] = pd.to_datetime(data['Date'], format='mixed', dayfirst=True, errors='coerce')
 
     if freq == 'W':
         # For weekly data: Normalize all dates to the start of their week (Monday)
@@ -144,7 +144,7 @@ def fill_missing_dates(data: pd.DataFrame, date_column: str, freq: str) -> pd.Da
     elif freq == 'ME':
         # For monthly data: Normalize to month-end
         data['Month_Period'] = data['Date'].dt.to_period('M')
-        data['Date'] = data['Month_Period'].dt.end_time  # Convert to month-end
+        data['Date'] = (data['Month_Period'].dt.to_timestamp(how='end').dt.normalize())        # Convert to month-end
         data = data.drop(columns=['Month_Period'])
         
         # Group by Date and Search Query, aggregating numeric columns
@@ -514,6 +514,11 @@ def create_interactive_plots(filtered_df):
         ),
         height=500
     )
+    #fixing axis wise months 
+    fig1.update_xaxes(tickmode='array',
+                      tickvals=filtered_df['Date'],
+                      ticktext=filtered_df['Date'].dt.strftime('%b %Y'))
+                      
     plots.append(("Purchase & Click Share vs Volume", fig1))
 
     # --- Plot 2: Brand Cart Adds Share and Brand Click Share ---
@@ -550,6 +555,10 @@ def create_interactive_plots(filtered_df):
         ),
         height=500
     )
+    fig2.update_xaxes(tickmode='array',
+                      tickvals=filtered_df['Date'],
+                      ticktext=filtered_df['Date'].dt.strftime('%b %Y'))
+    
     plots.append(("Cart Adds vs Click Share", fig2))
 
     # --- Plot 3: Brand Impressions Share and Search Query Volume ---
@@ -591,6 +600,10 @@ def create_interactive_plots(filtered_df):
         ),
         height=500
     )
+    fig3.update_xaxes(tickmode='array',
+                      tickvals=filtered_df['Date'],
+                      ticktext=filtered_df['Date'].dt.strftime('%b %Y'))
+    
     plots.append(("Impressions Share vs Volume", fig3))
 
     # --- Plot 4: Brand Purchase Share and Brand Cart Adds Share ---
@@ -627,6 +640,10 @@ def create_interactive_plots(filtered_df):
         ),
         height=500
     )
+    fig4.update_xaxes(tickmode='array',
+                      tickvals=filtered_df['Date'],
+                      ticktext=filtered_df['Date'].dt.strftime('%b %Y'))
+    
     plots.append(("Purchase vs Cart Adds Share", fig4))
 
     return plots
@@ -1568,7 +1585,7 @@ def main():
                 
                 if combined_df is not None:
                     # Show the actual dates found in the data
-                    original_dates = pd.to_datetime(combined_df['Reporting Date']).dt.strftime('%Y-%m-%d').unique()
+                    original_dates = (pd.to_datetime(combined_df['Reporting Date'],format='mixed', dayfirst=True).dt.strftime('%Y-%m-%d').unique())
                     st.info(f"📅 **Original dates found in uploaded files:** {len(original_dates)} unique date(s)")
                     st.caption(f"Raw dates: {', '.join(sorted(original_dates))}")
                     
@@ -1815,13 +1832,35 @@ def main():
                 with col_viz1:
                     st.markdown("### 🏆 Top Search Queries by Volume")
                     st.caption("Analyze multiple search queries based on their average search volume")
-                
+
                 with col_viz2:
-                    # Calculate average search volume for each search query
-                    avg_volumes = full_df.groupby('Search Query')['Search Query Volume'].mean().sort_values(ascending=False)
+                    # MIN_AVG_VOL BY USER INPUT (NEW)
+                    min_avg_volume = st.number_input("Minimum Average Volume:",
+                                                     min_value=0,
+                                                     value=10000,
+                                                     step=1000,
+                                                     help="Only search queries with average volume above this value will be displayed")
+
+                    df_with_month = full_df.assign(MonthNumber=full_df['Date'].dt.month)
+
+                    query_stats = (df_with_month.groupby('Search Query').agg(avg_volume=('Search Query Volume', 'mean'),
+                                                                             weighted_score=('Search Query Score',
+                                                                                             lambda x: np.sum(x[x > 0] * df_with_month.loc[x[x > 0].index, 'MonthNumber'])),
+                                                                             total_weight=('Search Query Score',lambda x: np.sum(df_with_month.loc[x[x > 0].index, 'MonthNumber'])))
+                                                                             .reset_index())
+
+                    query_stats['weighted_avg_score'] = (query_stats['weighted_score'] / query_stats['total_weight'])
                     
+                    query_stats = query_stats[query_stats['avg_volume'] >= min_avg_volume]
+
+                    if query_stats.empty:
+                        st.warning("No search queries meet the selected volume threshold")
+                        st.stop()
+
+                    query_stats = query_stats.sort_values(by=['weighted_avg_score', 'avg_volume'],ascending=[True, False])
+
                     # Top K selector
-                    max_products = min(20, len(avg_volumes))
+                    max_products = min(20, len(query_stats))
                     top_k = st.slider(
                         "Select number of top queries:",
                         min_value=1,
@@ -1830,10 +1869,10 @@ def main():
                         help="Select how many top search queries to display based on average search volume"
                     )
                 
-                # Get top K products
-                top_products = avg_volumes.head(top_k).index.tolist()
+                # Get top K products 
+                top_products = query_stats.head(top_k)['Search Query'].tolist()
                 
-                st.success(f"📈 Displaying top {top_k} search queries by average search volume")
+                st.success(f"📈 Top {top_k} Search Queries | Avg Volume ≥ {min_avg_volume:,} | Sorted by Weighted Avg Score")
                 
                 # Display each product's visualization
                 for idx, query in enumerate(top_products, 1):
@@ -1897,9 +1936,12 @@ def main():
                                 "Brand Purchase Share": st.column_config.NumberColumn("Purchase Share %", format="%.2f")
                             }
                         )
-                        
+
                         # Download button for this query's data
-                        csv_data_query = query_display_df.to_csv(index=False)
+                        csv_export_df = query_display_df.copy()
+                        csv_export_df['Date'] = csv_export_df['Date'].dt.date
+
+                        csv_data_query = csv_export_df.to_csv(index=False)
                         st.download_button(
                             label=f"📥 Download Data for '{query}'",
                             data=csv_data_query,
